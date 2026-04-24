@@ -383,6 +383,8 @@ function BudgetApp({session}){
   const [kobView,setKobView]=useState('liste'); // 'liste' | 'galleri'
   const [subcalcFor,setSubcalcFor]=useState(null); // id of row whose subcalc picker is open
   const [editFaserOpen,setEditFaserOpen]=useState(false);
+  const [dragId,setDragId]=useState(null);
+  const [dragOver,setDragOver]=useState({id:null,side:null});
   const [toast,setToast]=useState(null);
   const [tweaks,setTweaks]=useState(TWEAK_DEFAULTS);
   const [tweaksVisible,setTweaksVisible]=useState(false);
@@ -760,6 +762,54 @@ function BudgetApp({session}){
     });
   };
 
+  // Move srcId to land just above/below destId among their common parent's children.
+  // Destination must be a sibling (same parent) or they must both be top-level.
+  const moveToPosition=(srcId,destId,side)=>{
+    if(srcId===destId)return;
+    const src=dataMap.get(srcId);
+    const dest=dataMap.get(destId);
+    if(!src||!dest)return;
+    if(src.parent!==dest.parent)return;
+    setData(prev=>{
+      const parentId=src.parent;
+      let siblings;
+      if(parentId){
+        const parent=prev.find(d=>d.id===parentId);
+        if(!parent?.children)return prev;
+        siblings=[...parent.children];
+      }else{
+        siblings=prev.filter(d=>d.level===1).map(d=>d.id);
+      }
+      const srcIdx=siblings.indexOf(srcId);
+      if(srcIdx<0)return prev;
+      siblings.splice(srcIdx,1);
+      let destIdx=siblings.indexOf(destId);
+      if(destIdx<0)return prev;
+      if(side==='below')destIdx++;
+      siblings.splice(destIdx,0,srcId);
+
+      let u=[...prev];
+      if(parentId)u=u.map(d=>d.id===parentId?{...d,children:siblings}:d);
+      const parentLevel=parentId?u.find(d=>d.id===parentId).level:0;
+      const subtreeStart=parentId?(u.findIndex(d=>d.id===parentId)+1):0;
+      let subtreeEnd=subtreeStart;
+      while(subtreeEnd<u.length&&u[subtreeEnd].level>parentLevel)subtreeEnd++;
+      const region=u.slice(subtreeStart,subtreeEnd);
+      const subtrees=new Map();
+      let i=0;
+      while(i<region.length){
+        const s=region[i];
+        if(s.level!==parentLevel+1){i++;continue;}
+        let j=i+1;
+        while(j<region.length&&region[j].level>s.level)j++;
+        subtrees.set(s.id,region.slice(i,j));
+        i=j;
+      }
+      const reordered=siblings.flatMap(sid=>subtrees.get(sid)||[]);
+      return[...u.slice(0,subtreeStart),...reordered,...u.slice(subtreeEnd)];
+    });
+  };
+
   const canMove=(id,dir)=>{
     const item=dataMap.get(id);
     if(!item)return false;
@@ -947,7 +997,7 @@ function BudgetApp({session}){
   const anyActual=data.filter(d=>d.level===1).some(d=>hasAnyActual(d,dataMap,receiptSums));
   const totalDiff=totalActual-totalSumTracked;
 
-  const gridCols=isMobile?'40px 1fr 80px 30px':'52px 1.3fr 60px 48px 82px 92px 92px 72px 100px 36px';
+  const gridCols=isMobile?'40px 1fr 80px 30px':'52px 1.3fr 60px 48px 82px 92px 92px 72px 100px 124px';
   const selectedItem=selectedId?dataMap.get(selectedId):null;
 
   const LinkEditor=({item})=>{
@@ -1388,18 +1438,42 @@ function BudgetApp({session}){
             const ownKat=item.kategori||'';
             const inherited=!ownKat&&effKat;
 
+            const isDragOverAbove=dragOver.id===item.id&&dragOver.side==='above';
+            const isDragOverBelow=dragOver.id===item.id&&dragOver.side==='below';
             return(
               <div key={item.id} data-row-id={item.id} data-row-level={item.level} className="budget-row" onClick={()=>setSelectedId(item.id)}
+                onDragOver={e=>{
+                  if(!dragId||dragId===item.id)return;
+                  const src=dataMap.get(dragId);
+                  if(!src||src.parent!==item.parent)return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect='move';
+                  const rect=e.currentTarget.getBoundingClientRect();
+                  const side=e.clientY<rect.top+rect.height/2?'above':'below';
+                  if(dragOver.id!==item.id||dragOver.side!==side)setDragOver({id:item.id,side});
+                }}
+                onDragLeave={e=>{if(dragOver.id===item.id)setDragOver({id:null,side:null});}}
+                onDrop={e=>{
+                  e.preventDefault();
+                  if(dragId&&dragId!==item.id){
+                    moveToPosition(dragId,item.id,dragOver.side||'below');
+                  }
+                  setDragId(null);
+                  setDragOver({id:null,side:null});
+                }}
                 style={{display:'grid',gridTemplateColumns:gridCols,padding:'5px 10px',alignItems:'center',gap:'0 12px',
-                  background:isSel?'#dbeafe':lc.bg,borderBottom:'1px solid #e8ecf0',
+                  background:isSel?'#dbeafe':lc.bg,
+                  borderTop:isDragOverAbove?'2px solid '+tweaks.accentColor:'none',
+                  borderBottom:isDragOverBelow?'2px solid '+tweaks.accentColor:'1px solid #e8ecf0',
                   fontSize:lc.fs,fontWeight:lc.fw,color:lc.color,cursor:'pointer',transition:'background .1s',minHeight:item.level<=2?38:32,
+                  opacity:dragId===item.id?0.4:1,
                   ...(item.level===1?{position:'sticky',top:stickyHeaderH+gIdx*38,zIndex:92,background:isSel?'#dbeafe':'#1e293b',boxShadow:'0 1px 3px rgba(0,0,0,0.1)'}:{}),
                   ...(item.level===2?(()=>{
                     const idx=lvl2StickyMap.get(item.id)||0;
                     return{position:'sticky',top:stickyHeaderH+(gIdx+1)*38+(idx*34),zIndex:91-idx,background:isSel?'#dbeafe':'#e8eef6',boxShadow:'0 1px 2px rgba(0,0,0,0.06)'};
                   })():{})
                 }}
-                onMouseEnter={e=>{if(!isSel)e.currentTarget.style.background=item.level===1?lc.bg:'#f8fafc'}}
+                onMouseEnter={e=>{if(!isSel&&!dragId)e.currentTarget.style.background=item.level===1?lc.bg:'#f8fafc'}}
                 onMouseLeave={e=>{e.currentTarget.style.background=isSel?'#dbeafe':lc.bg}}>
                 <span style={{fontSize:10,color:'#94a3b8',fontFamily:'monospace'}}>{item.id}</span>
                 <div style={{display:'flex',alignItems:'center',paddingLeft:indent,gap:4,overflow:'hidden'}}>
@@ -1431,11 +1505,23 @@ function BudgetApp({session}){
                   {showOwn&&<SelectCell id={item.id} field="kategori" value={ownKat} options={catOptions}/>}
                   {showOwn&&inherited&&<span style={{fontSize:8,color:'#94a3b8',display:'block',marginTop:-2}}>↑ {effKat}</span>}
                 </div>
-                <div className="row-actions" style={{display:'flex',gap:1,justifyContent:'flex-end'}}>
-                  <button onClick={e=>{e.stopPropagation();moveItem(item.id,'up')}} disabled={!canMove(item.id,'up')} title="Flyt op" style={{width:18,height:20,borderRadius:4,border:'none',background:'transparent',cursor:canMove(item.id,'up')?'pointer':'default',fontSize:10,color:canMove(item.id,'up')?'#94a3b8':'#e2e8f0',display:'flex',alignItems:'center',justifyContent:'center'}}>▲</button>
-                  <button onClick={e=>{e.stopPropagation();moveItem(item.id,'down')}} disabled={!canMove(item.id,'down')} title="Flyt ned" style={{width:18,height:20,borderRadius:4,border:'none',background:'transparent',cursor:canMove(item.id,'down')?'pointer':'default',fontSize:10,color:canMove(item.id,'down')?'#94a3b8':'#e2e8f0',display:'flex',alignItems:'center',justifyContent:'center'}}>▼</button>
-                  {canAddChild&&<button onClick={e=>{e.stopPropagation();addChild(item.id)}} title="Tilføj" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:14,color:'#94a3b8',display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>}
-                  <button onClick={e=>{e.stopPropagation();if(item.level===1){if(!confirm('Slet hele projektet "'+item.desc+'" inkl. alle underposter? Dette kan ikke fortrydes.'))return;}deleteItem(item.id)}} title="Slet" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:'#cbd5e1',display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+                <div className="row-actions" style={{display:'flex',gap:6,justifyContent:'flex-end',alignItems:'center'}}>
+                  <span draggable={true}
+                    onDragStart={e=>{
+                      e.stopPropagation();
+                      e.dataTransfer.setData('text/plain',item.id);
+                      e.dataTransfer.effectAllowed='move';
+                      const rowEl=e.currentTarget.closest('[data-row-id]');
+                      if(rowEl)e.dataTransfer.setDragImage(rowEl,0,0);
+                      setDragId(item.id);
+                    }}
+                    onDragEnd={()=>{setDragId(null);setDragOver({id:null,side:null});}}
+                    title="Træk for at flytte"
+                    style={{cursor:'grab',color:item.level===1?'rgba(255,255,255,.55)':'#cbd5e1',padding:'0 2px',fontSize:12,userSelect:'none',lineHeight:1}}>⋮⋮</span>
+                  <button onClick={e=>{e.stopPropagation();moveItem(item.id,'up')}} disabled={!canMove(item.id,'up')} title="Flyt op" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:canMove(item.id,'up')?'pointer':'default',fontSize:10,color:canMove(item.id,'up')?(item.level===1?'rgba(255,255,255,.65)':'#94a3b8'):'#e2e8f0',display:'flex',alignItems:'center',justifyContent:'center'}}>▲</button>
+                  <button onClick={e=>{e.stopPropagation();moveItem(item.id,'down')}} disabled={!canMove(item.id,'down')} title="Flyt ned" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:canMove(item.id,'down')?'pointer':'default',fontSize:10,color:canMove(item.id,'down')?(item.level===1?'rgba(255,255,255,.65)':'#94a3b8'):'#e2e8f0',display:'flex',alignItems:'center',justifyContent:'center'}}>▼</button>
+                  {canAddChild&&<button onClick={e=>{e.stopPropagation();addChild(item.id)}} title="Tilføj underpost" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:14,color:item.level===1?'rgba(255,255,255,.65)':'#94a3b8',display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>}
+                  <button onClick={e=>{e.stopPropagation();if(item.level===1){if(!confirm('Slet hele projektet "'+item.desc+'" inkl. alle underposter? Dette kan ikke fortrydes.'))return;}deleteItem(item.id)}} title="Slet" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:item.level===1?'rgba(255,255,255,.55)':'#cbd5e1',display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
                 </div>
               </div>
             );

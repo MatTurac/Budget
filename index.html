@@ -710,6 +710,70 @@ function BudgetApp({session}){
     if(selectedId===id)setSelectedId(null);
   };
 
+  // Move an item up or down within its siblings (or within top-level items).
+  // Keeps the flat data[] array order in sync so the visual order follows the children order.
+  const moveItem=(id,dir)=>{
+    setData(prev=>{
+      const item=prev.find(d=>d.id===id);
+      if(!item)return prev;
+      // Reorder the sibling list
+      let newSiblings;
+      if(item.parent){
+        const parent=prev.find(d=>d.id===item.parent);
+        if(!parent?.children)return prev;
+        const sibs=parent.children;
+        const idx=sibs.indexOf(id);
+        const tgt=dir==='up'?idx-1:idx+1;
+        if(idx<0||tgt<0||tgt>=sibs.length)return prev;
+        newSiblings=[...sibs];[newSiblings[idx],newSiblings[tgt]]=[newSiblings[tgt],newSiblings[idx]];
+      }else{
+        // Top-level reorder
+        const topIds=prev.filter(d=>d.level===1).map(d=>d.id);
+        const idx=topIds.indexOf(id);
+        const tgt=dir==='up'?idx-1:idx+1;
+        if(idx<0||tgt<0||tgt>=topIds.length)return prev;
+        newSiblings=[...topIds];[newSiblings[idx],newSiblings[tgt]]=[newSiblings[tgt],newSiblings[idx]];
+      }
+      // Extract each sibling's subtree and reassemble in new order
+      let u=[...prev];
+      if(item.parent){
+        u=u.map(d=>d.id===item.parent?{...d,children:newSiblings}:d);
+      }
+      const parentLevel=item.parent?(u.find(d=>d.id===item.parent).level):0;
+      const subtreeStart=item.parent?(u.findIndex(d=>d.id===item.parent)+1):0;
+      let subtreeEnd=subtreeStart;
+      while(subtreeEnd<u.length&&u[subtreeEnd].level>parentLevel)subtreeEnd++;
+      const region=u.slice(subtreeStart,subtreeEnd);
+      // Group region into per-sibling subtrees
+      const subtrees=new Map();
+      let i=0;
+      while(i<region.length){
+        const s=region[i];
+        if(s.level!==parentLevel+1){i++;continue;}
+        let j=i+1;
+        while(j<region.length&&region[j].level>s.level)j++;
+        subtrees.set(s.id,region.slice(i,j));
+        i=j;
+      }
+      const reordered=newSiblings.flatMap(sid=>subtrees.get(sid)||[]);
+      return[...u.slice(0,subtreeStart),...reordered,...u.slice(subtreeEnd)];
+    });
+  };
+
+  const canMove=(id,dir)=>{
+    const item=dataMap.get(id);
+    if(!item)return false;
+    if(item.parent){
+      const parent=dataMap.get(item.parent);
+      const sibs=parent?.children||[];
+      const idx=sibs.indexOf(id);
+      return dir==='up'?idx>0:idx>=0&&idx<sibs.length-1;
+    }
+    const topIds=data.filter(d=>d.level===1).map(d=>d.id);
+    const idx=topIds.indexOf(id);
+    return dir==='up'?idx>0:idx>=0&&idx<topIds.length-1;
+  };
+
   // Paste handler ─────────────────────────────────────────────────
   const handlePaste=useCallback(e=>{
     if(activeTab!=='budget'||editingCell)return;
@@ -983,6 +1047,8 @@ function BudgetApp({session}){
               </label>
             )}
             <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {canMove(item.id,'up')&&<button onClick={()=>moveItem(item.id,'up')} style={{padding:'6px 10px',borderRadius:5,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:11,color:'#475569',fontFamily:'DM Sans'}}>▲ Op</button>}
+              {canMove(item.id,'down')&&<button onClick={()=>moveItem(item.id,'down')} style={{padding:'6px 10px',borderRadius:5,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:11,color:'#475569',fontFamily:'DM Sans'}}>▼ Ned</button>}
               {canAddChild&&<button onClick={()=>addChild(item.id)} style={{padding:'6px 10px',borderRadius:5,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:11,fontWeight:600,color:'#475569',fontFamily:'DM Sans'}}>+ Underpost</button>}
               <button onClick={()=>setEditingLink(item.id)} style={{padding:'6px 10px',borderRadius:5,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:11,color:'#475569',fontFamily:'DM Sans'}}>{item.link?'✎ Link':'+ Link'}</button>
               {item.link&&<a href={item.link} target="_blank" rel="noopener" style={{padding:'6px 10px',borderRadius:5,border:'1px solid #e2e8f0',background:'white',fontSize:11,color:tweaks.accentColor,textDecoration:'none',fontFamily:'DM Sans'}}>↗ Åbn</a>}
@@ -1342,6 +1408,8 @@ function BudgetApp({session}){
                   {showOwn&&inherited&&<span style={{fontSize:8,color:'#94a3b8',display:'block',marginTop:-2}}>↑ {effKat}</span>}
                 </div>
                 <div className="row-actions" style={{display:'flex',gap:1,justifyContent:'flex-end'}}>
+                  <button onClick={e=>{e.stopPropagation();moveItem(item.id,'up')}} disabled={!canMove(item.id,'up')} title="Flyt op" style={{width:18,height:20,borderRadius:4,border:'none',background:'transparent',cursor:canMove(item.id,'up')?'pointer':'default',fontSize:10,color:canMove(item.id,'up')?'#94a3b8':'#e2e8f0',display:'flex',alignItems:'center',justifyContent:'center'}}>▲</button>
+                  <button onClick={e=>{e.stopPropagation();moveItem(item.id,'down')}} disabled={!canMove(item.id,'down')} title="Flyt ned" style={{width:18,height:20,borderRadius:4,border:'none',background:'transparent',cursor:canMove(item.id,'down')?'pointer':'default',fontSize:10,color:canMove(item.id,'down')?'#94a3b8':'#e2e8f0',display:'flex',alignItems:'center',justifyContent:'center'}}>▼</button>
                   {canAddChild&&<button onClick={e=>{e.stopPropagation();addChild(item.id)}} title="Tilføj" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:14,color:'#94a3b8',display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>}
                   <button onClick={e=>{e.stopPropagation();if(item.level===1){if(!confirm('Slet hele projektet "'+item.desc+'" inkl. alle underposter? Dette kan ikke fortrydes.'))return;}deleteItem(item.id)}} title="Slet" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:'#cbd5e1',display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
                 </div>

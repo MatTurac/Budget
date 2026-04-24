@@ -1,0 +1,1642 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Byggebudget</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'DM Sans',system-ui,sans-serif;background:#f0f2f5;color:#1a1a2e}
+.tab-btn{padding:7px 16px;border:none;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;border-radius:7px 7px 0 0;transition:all .15s}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e293b;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;animation:toastIn .3s ease}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+.row-actions{opacity:0;transition:opacity .1s}
+.budget-row:hover .row-actions{opacity:1}
+.sticky-top{position:sticky;top:0;z-index:100;background:#f0f2f5}
+.sticky-bottom{position:sticky;bottom:0;z-index:98}
+@media(max-width:700px){
+  .desktop-only{display:none!important}
+  .mobile-header{flex-direction:column!important;align-items:flex-start!important}
+  input,select,textarea{font-size:16px!important}
+  .mobile-controls{flex-wrap:wrap!important;width:100%}
+}
+@media(min-width:701px){
+  .mobile-only{display:none!important}
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+
+// ═══════════════════════════════════════════════════════════════════
+// CONFIGURATION — paste your Supabase credentials here.
+// Get them from Supabase → Project Settings → API.
+// The anon key is safe to expose: it only grants row-level-security-
+// scoped access and the user must still authenticate.
+// ═══════════════════════════════════════════════════════════════════
+const SUPABASE_URL      = 'https://gqlkgwglhvrrutmvulvd.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_eQX95xwkeiHd0nfLJwcI1w_CjpTBbz6';
+// ═══════════════════════════════════════════════════════════════════
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accentColor": "#2563eb"
+}/*EDITMODE-END*/;
+
+const {useState,useEffect,useRef,useMemo,useCallback} = React;
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const fmt  = n=>n==null?'':n.toLocaleString('da-DK',{minimumFractionDigits:0,maximumFractionDigits:0});
+const fmt2 = n=>n==null?'':n.toLocaleString('da-DK',{minimumFractionDigits:2,maximumFractionDigits:2});
+const parseDK = s=>parseFloat(String(s).replace(/\./g,'').replace(',','.'))||0;
+const MAX_LEVEL=5;
+const DEFAULT_CATEGORIES=['Fase 1','Fase 2','Fase 3','Fase 4','Løbende','Afslutning','Afventer'];
+const UNITS=['','stk','m²','lbm','m','sæt','rulle','pose','time','dag','kg','liter','pakke'];
+
+function defaultSubCalcs(){return[
+  {id:'sc1',name:'Gulvfundament pr m²',unit:'m²',items:[
+    {id:'sc1-1',desc:'Isolering',antal:1,pris:185},{id:'sc1-2',desc:'Armering',antal:1,pris:78},
+    {id:'sc1-3',desc:'Beton',antal:0.15,pris:1200},{id:'sc1-4',desc:'Radonspærre',antal:1,pris:45},
+    {id:'sc1-5',desc:'Arbejdsløn',antal:1,pris:575}]},
+  {id:'sc2',name:'Vinyl gulv pr m²',unit:'m²',items:[
+    {id:'sc2-1',desc:'Vinyl planker',antal:1,pris:349},{id:'sc2-2',desc:'Underlag',antal:1,pris:52},
+    {id:'sc2-3',desc:'Lim/tilbehør',antal:1,pris:50}]}
+]}
+
+function createInitialData(){return[
+  {id:'1',level:1,desc:'Hus',children:['1.1','1.2','1.3','1.4']},
+  {id:'1.1',level:2,desc:'Udvendigt',parent:'1',children:['1.1.1','1.1.2','1.1.3'],kategori:'Fase 1'},
+  {id:'1.1.1',level:3,desc:'Udhæng',parent:'1.1',children:['1.1.1.1','1.1.1.2','1.1.1.3']},
+  {id:'1.1.1.1',level:4,desc:'Sorte Udhængsbrædder',parent:'1.1.1',antal:500,pris:26,enhed:'stk'},
+  {id:'1.1.1.2',level:4,desc:'NKT spun+ skrue uh climate 63 420 stk',parent:'1.1.1',antal:2,pris:90,enhed:'pakke'},
+  {id:'1.1.1.3',level:4,desc:'Diverse',parent:'1.1.1',antal:1,pris:1000,enhed:'stk'},
+  {id:'1.1.2',level:3,desc:'Tagrender',parent:'1.1',children:['1.1.2.1','1.1.2.2','1.1.2.3','1.1.2.4','1.1.2.5','1.1.2.6','1.1.2.7','1.1.2.8','1.1.2.9']},
+  {id:'1.1.2.1',level:4,desc:'Tagrende',parent:'1.1.2',antal:17,pris:722,enhed:'lbm'},
+  {id:'1.1.2.2',level:4,desc:'Hjørner indvendig',parent:'1.1.2',antal:2,pris:122,enhed:'stk'},
+  {id:'1.1.2.3',level:4,desc:'Hjørner udvendig',parent:'1.1.2',antal:6,pris:115,enhed:'stk'},
+  {id:'1.1.2.4',level:4,desc:'Tudstykke',parent:'1.1.2',antal:6,pris:127,enhed:'stk'},
+  {id:'1.1.2.5',level:4,desc:'nedløbsrør 3mtr',parent:'1.1.2',antal:6,pris:354,enhed:'stk'},
+  {id:'1.1.2.6',level:4,desc:'Bøjning 75gr',parent:'1.1.2',antal:6,pris:87,enhed:'stk'},
+  {id:'1.1.2.7',level:4,desc:'Bøjning 45gr',parent:'1.1.2',antal:6,pris:75,enhed:'stk'},
+  {id:'1.1.2.8',level:4,desc:'Endebund',parent:'1.1.2',antal:2,pris:46,enhed:'stk'},
+  {id:'1.1.2.9',level:4,desc:'Diverse',parent:'1.1.2',antal:1,pris:1000,enhed:'stk'},
+  {id:'1.1.3',level:3,desc:'Tag',parent:'1.1',children:['1.1.3.1','1.1.3.2','1.1.3.3','1.1.3.4']},
+  {id:'1.1.3.1',level:4,desc:'Lægter',parent:'1.1.3',antal:2,pris:75,enhed:'stk'},
+  {id:'1.1.3.2',level:4,desc:'Tegl',parent:'1.1.3',antal:40,pris:44,enhed:'stk'},
+  {id:'1.1.3.3',level:4,desc:'Rygningsten',parent:'1.1.3',antal:2,pris:375,enhed:'stk'},
+  {id:'1.1.3.4',level:4,desc:'Maling',parent:'1.1.3',antal:8,pris:975,enhed:'liter',link:'https://www.maling.nu'},
+  {id:'1.2',level:2,desc:'Vinduer og Døre',parent:'1',children:['1.2.1','1.2.2'],kategori:'Fase 1'},
+  {id:'1.2.1',level:3,desc:'Vinduer og døre',parent:'1.2',prisSum:150000},
+  {id:'1.2.2',level:3,desc:'Tilskud',parent:'1.2',prisSum:-21500},
+  {id:'1.3',level:2,desc:'Køkken og Viktualierum 16+3,4 m²=19,4m²',parent:'1',children:['1.3.1','1.3.2','1.3.3','1.3.4','1.3.5','1.3.6'],kategori:'Fase 2'},
+  {id:'1.3.1',level:3,desc:'Gulv 20m²',parent:'1.3',children:['1.3.1.1','1.3.1.2','1.3.1.3']},
+  {id:'1.3.1.1',level:4,desc:'Gulvfundament',parent:'1.3.1',antal:20,pris:1063,enhed:'m²',subCalcRef:'sc1'},
+  {id:'1.3.1.2',level:4,desc:'Beton kørsel',parent:'1.3.1',antal:1,pris:5000,enhed:'stk'},
+  {id:'1.3.1.3',level:4,desc:'Vinyl gulv',parent:'1.3.1',antal:20,pris:451,enhed:'m²',subCalcRef:'sc2'},
+  {id:'1.3.2',level:3,desc:'Vægge',parent:'1.3',children:['1.3.2.1']},
+  {id:'1.3.2.1',level:4,desc:'Vægge',parent:'1.3.2',antal:10,pris:1172,enhed:'m²'},
+  {id:'1.3.3',level:3,desc:'Loft 20m²',parent:'1.3',children:['1.3.3.1']},
+  {id:'1.3.3.1',level:4,desc:'Loft',parent:'1.3.3',antal:20,pris:728,enhed:'m²'},
+  {id:'1.3.4',level:3,desc:'Køkken',parent:'1.3',children:['1.3.4.1','1.3.4.2','1.3.4.3']},
+  {id:'1.3.4.1',level:4,desc:'Møbler og Inventar IKEA',parent:'1.3.4',prisSum:42600,kategori:'Fase 3'},
+  {id:'1.3.4.2',level:4,desc:'Hvidevare',parent:'1.3.4',prisSum:80206,kategori:'Fase 3'},
+  {id:'1.3.4.3',level:4,desc:'Bordplade',parent:'1.3.4',prisSum:63000,kategori:'Fase 3'},
+  {id:'1.3.5',level:3,desc:'VVS',parent:'1.3',children:['1.3.5.1','1.3.5.2']},
+  {id:'1.3.5.1',level:4,desc:'Kloak',parent:'1.3.5',prisSum:15000},
+  {id:'1.3.5.2',level:4,desc:'Vand',parent:'1.3.5',prisSum:5000},
+  {id:'1.3.6',level:3,desc:'El',parent:'1.3',children:['1.3.6.1','1.3.6.2','1.3.6.3','1.3.6.4','1.3.6.5']},
+  {id:'1.3.6.1',level:4,desc:'Stikdåser',parent:'1.3.6',antal:15,pris:128,enhed:'stk'},
+  {id:'1.3.6.2',level:4,desc:'Installations dåse',parent:'1.3.6',antal:15,pris:25,enhed:'stk'},
+  {id:'1.3.6.3',level:4,desc:'Installations kabel 50 meter',parent:'1.3.6',antal:2,pris:1000,enhed:'rulle'},
+  {id:'1.3.6.4',level:4,desc:'GU10 575 Lumen Pære IKEA',parent:'1.3.6',antal:16,pris:49,enhed:'stk',kategori:'Fase 3'},
+  {id:'1.3.6.5',level:4,desc:'Nordtronic Fast Install ECO indbygningsspot, GU10',parent:'1.3.6',antal:16,pris:52,enhed:'stk',kategori:'Fase 3'},
+  {id:'1.4',level:2,desc:'Spisestue og Stue 25+19=34m²',parent:'1',children:['1.4.1'],kategori:'Fase 2'},
+  {id:'1.4.1',level:3,desc:'Gulv 34m²',parent:'1.4',children:['1.4.1.1','1.4.1.2','1.4.1.3']},
+  {id:'1.4.1.1',level:4,desc:'Gulvfundament',parent:'1.4.1',antal:34,pris:1063,enhed:'m²',subCalcRef:'sc1'},
+  {id:'1.4.1.2',level:4,desc:'Beton kørsel',parent:'1.4.1',antal:1,pris:5000,enhed:'stk'},
+  {id:'1.4.1.3',level:4,desc:'Vinyl gulv',parent:'1.4.1',antal:34,pris:451,enhed:'m²',subCalcRef:'sc2'},
+]}
+
+function calcSum(item,dataMap){
+  let own=0;
+  if(item.prisSum!=null&&!item.children)return item.prisSum;
+  if(item.antal!=null&&item.pris!=null)own=item.antal*item.pris;
+  if(!item.children||!item.children.length)return own;
+  return own+item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+calcSum(c,dataMap):s;},0);
+}
+function calcActual(item,dataMap,receiptSums){
+  const rs=receiptSums?receiptSums.get(item.id)||0:0;
+  if(item.faktisk!=null&&item.faktisk!=='')return (Number(item.faktisk)||0)+rs;
+  if(!item.children||!item.children.length)return rs;
+  return rs+item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+calcActual(c,dataMap,receiptSums):s;},0);
+}
+function calcSumTracked(item,dataMap,receiptSums){
+  const hasOwn=(item.faktisk!=null&&item.faktisk!=='')||(receiptSums&&receiptSums.get(item.id));
+  if(hasOwn)return calcSum(item,dataMap);
+  if(!item.children||!item.children.length)return 0;
+  return item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+calcSumTracked(c,dataMap,receiptSums):s;},0);
+}
+function hasAnyActual(item,dataMap,receiptSums){
+  if(item.faktisk!=null&&item.faktisk!=='')return true;
+  if(receiptSums&&receiptSums.get(item.id))return true;
+  if(!item.children)return false;
+  return item.children.some(cid=>{const c=dataMap.get(cid);return c&&hasAnyActual(c,dataMap,receiptSums);});
+}
+function calcSCT(sc){return sc.items.reduce((s,it)=>s+(it.antal||0)*(it.pris||0),0)}
+
+// ═══════════════════════════════════════════════════════════════════
+// Searchable combobox for linking a receipt line to a budget post.
+// Shows id + description + ancestor breadcrumb (mirroring the tree hierarchy).
+// ═══════════════════════════════════════════════════════════════════
+function SearchableLeafSelect({value,onChange,options,accent,placeholder='Søg efter post…'}){
+  const [open,setOpen]=useState(false);
+  const [query,setQuery]=useState('');
+  const [hover,setHover]=useState(0);
+  const [pos,setPos]=useState(null);
+  const rootRef=useRef(null);
+  const inputRef=useRef(null);
+  const listRef=useRef(null);
+
+  const calcPos=useCallback(()=>{
+    if(!rootRef.current)return;
+    const r=rootRef.current.getBoundingClientRect();
+    const desiredH=320;
+    const spaceBelow=window.innerHeight-r.bottom-12;
+    const spaceAbove=r.top-12;
+    const showAbove=spaceBelow<220&&spaceAbove>spaceBelow;
+    const maxH=Math.max(140,Math.min(desiredH,showAbove?spaceAbove:spaceBelow));
+    setPos({left:r.left,width:r.width,top:showAbove?r.top-4:r.bottom+4,showAbove,maxHeight:maxH});
+  },[]);
+
+  useEffect(()=>{
+    const onDoc=e=>{
+      if(rootRef.current&&rootRef.current.contains(e.target))return;
+      if(listRef.current&&listRef.current.contains(e.target))return;
+      setOpen(false);setQuery('');
+    };
+    document.addEventListener('mousedown',onDoc);
+    return()=>document.removeEventListener('mousedown',onDoc);
+  },[]);
+
+  useEffect(()=>{
+    if(!open){setPos(null);return;}
+    calcPos();
+    window.addEventListener('scroll',calcPos,true);
+    window.addEventListener('resize',calcPos);
+    return()=>{
+      window.removeEventListener('scroll',calcPos,true);
+      window.removeEventListener('resize',calcPos);
+    };
+  },[open,calcPos]);
+
+  const current=options.find(o=>o.value===value);
+  const q=query.trim().toLowerCase();
+  const leafOpts=options.filter(o=>o.value!=='');
+  const filtered=!q?leafOpts:leafOpts.filter(o=>{
+    return o.value.toLowerCase().includes(q)
+      ||(o.label||'').toLowerCase().includes(q)
+      ||(o.path||'').toLowerCase().includes(q);
+  });
+
+  const pick=v=>{onChange(v);setOpen(false);setQuery('');setHover(0);};
+
+  const onKey=e=>{
+    if(e.key==='ArrowDown'){e.preventDefault();setHover(h=>Math.min(h+1,filtered.length));}
+    else if(e.key==='ArrowUp'){e.preventDefault();setHover(h=>Math.max(h-1,0));}
+    else if(e.key==='Enter'){
+      e.preventDefault();
+      if(hover===0)pick('');
+      else if(filtered[hover-1])pick(filtered[hover-1].value);
+    }
+    else if(e.key==='Escape'){e.preventDefault();setOpen(false);setQuery('');}
+  };
+
+  useEffect(()=>{
+    if(!open||!listRef.current)return;
+    const el=listRef.current.querySelector('[data-hover="true"]');
+    if(el)el.scrollIntoView({block:'nearest'});
+  },[hover,open]);
+
+  return(
+    <div ref={rootRef} style={{position:'relative'}}>
+      <div onClick={()=>{if(!open){setOpen(true);setHover(0);setTimeout(()=>inputRef.current?.focus(),0);}}}
+        style={{padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:11,fontFamily:'inherit',background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',gap:6,minHeight:26}}>
+        {open?
+          <input ref={inputRef} autoFocus value={query} onChange={e=>{setQuery(e.target.value);setHover(0);}} onKeyDown={onKey} onClick={e=>e.stopPropagation()} placeholder={placeholder}
+            style={{border:'none',outline:'none',fontSize:11,fontFamily:'inherit',background:'transparent',flex:1,color:'#0f172a',minWidth:0}}/>
+          :(current?.value
+            ?<span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1,minWidth:0,color:accent,fontWeight:600}}>
+                <span style={{fontFamily:'monospace',fontSize:10,color:'#94a3b8',marginRight:6,fontWeight:400}}>{current.value}</span>{current.label}
+              </span>
+            :<span style={{flex:1,color:'#94a3b8'}}>— Ingen kobling —</span>)
+        }
+        <span style={{fontSize:9,color:'#94a3b8',flexShrink:0}}>{open?'▲':'▼'}</span>
+      </div>
+      {open&&pos&&(
+        <div ref={listRef} style={{position:'fixed',left:pos.left,width:pos.width,top:pos.top,maxHeight:pos.maxHeight,transform:pos.showAbove?'translateY(-100%)':'none',zIndex:9999,background:'white',border:'1px solid #e2e8f0',borderRadius:6,boxShadow:'0 8px 24px rgba(0,0,0,0.14)',overflowY:'auto'}}>
+          <div onClick={()=>pick('')}
+            data-hover={hover===0}
+            style={{padding:'8px 10px',fontSize:11,cursor:'pointer',color:'#64748b',background:hover===0?'#f1f5f9':'white',borderBottom:'1px solid #f1f5f9',fontStyle:'italic'}}
+            onMouseEnter={()=>setHover(0)}>
+            — Ingen kobling —
+          </div>
+          {filtered.length===0?(
+            <div style={{padding:'16px 10px',fontSize:11,color:'#94a3b8',textAlign:'center'}}>Ingen match</div>
+          ):filtered.map((o,i)=>{
+            const isSel=o.value===value;
+            const isHov=hover===i+1;
+            const lvlStyle={
+              1:{fw:700,fs:14,color:'#0f172a',bg:'#f1f5f9'},
+              2:{fw:700,fs:13,color:'#1e293b',bg:'#f8fafc'},
+              3:{fw:600,fs:13,color:'#334155',bg:'white'},
+              4:{fw:500,fs:12,color:'#475569',bg:'white'},
+              5:{fw:400,fs:12,color:'#64748b',bg:'white'},
+            }[o.level]||{fw:400,fs:12,color:'#64748b',bg:'white'};
+            const indent=Math.max(0,(o.level-1))*12;
+            const rowBg=isSel?'#dbeafe':isHov?'#eff6ff':lvlStyle.bg;
+            return(
+              <div key={o.value} data-hover={isHov} onClick={()=>pick(o.value)}
+                style={{padding:'6px 10px 6px '+(10+indent)+'px',cursor:'pointer',background:rowBg,borderBottom:'1px solid #f1f5f9',borderLeft:o.level>=2?'2px solid '+(o.level===2?'#cbd5e1':o.level===3?'#e2e8f0':'#f1f5f9'):'2px solid transparent'}}
+                onMouseEnter={()=>setHover(i+1)}>
+                <div style={{display:'flex',alignItems:'baseline',gap:8}}>
+                  <span style={{fontFamily:'monospace',fontSize:10,color:'#94a3b8',flexShrink:0,minWidth:58}}>{o.value}</span>
+                  <span style={{fontSize:lvlStyle.fs,fontWeight:lvlStyle.fw,color:lvlStyle.color,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{o.label}</span>
+                </div>
+                {o.path&&<div style={{fontSize:10,color:'#94a3b8',marginTop:1,marginLeft:66,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontStyle:'italic'}}>{o.path}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AUTH GATE
+// ═══════════════════════════════════════════════════════════════════
+function LoginScreen(){
+  const [email,setEmail]=useState('');
+  const [password,setPassword]=useState('');
+  const [mode,setMode]=useState('signin'); // 'signin' | 'signup'
+  const [busy,setBusy]=useState(false);
+  const [msg,setMsg]=useState(null);
+  const accent=TWEAK_DEFAULTS.accentColor;
+
+  const submit=async e=>{
+    e.preventDefault();
+    setBusy(true);setMsg(null);
+    try{
+      if(mode==='signup'){
+        const {error}=await supabase.auth.signUp({email,password});
+        if(error)throw error;
+        setMsg({kind:'ok',text:'Konto oprettet. Tjek din e-mail for en bekræftelseslink hvis det er aktiveret, ellers log ind nu.'});
+      }else{
+        const {error}=await supabase.auth.signInWithPassword({email,password});
+        if(error)throw error;
+      }
+    }catch(err){
+      setMsg({kind:'err',text:err.message||'Ukendt fejl'});
+    }finally{setBusy(false)}
+  };
+
+  return(
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',padding:20,background:'#f0f2f5'}}>
+      <div style={{background:'white',borderRadius:14,boxShadow:'0 8px 32px rgba(0,0,0,0.08)',padding:32,width:'100%',maxWidth:380}}>
+        <h1 style={{fontSize:24,fontWeight:700,color:'#0f172a',letterSpacing:'-0.02em',marginBottom:4}}>Byggebudget</h1>
+        <p style={{color:'#64748b',fontSize:13,marginBottom:22}}>{mode==='signup'?'Opret en konto':'Log ind på din konto'}</p>
+        <form onSubmit={submit} style={{display:'flex',flexDirection:'column',gap:10}}>
+          <label style={{display:'flex',flexDirection:'column',gap:4}}>
+            <span style={{fontSize:10,fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em'}}>E-mail</span>
+            <input type="email" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)}
+              style={{padding:'9px 11px',border:'1px solid #e2e8f0',borderRadius:7,fontSize:14,fontFamily:'inherit',outline:'none'}}/>
+          </label>
+          <label style={{display:'flex',flexDirection:'column',gap:4}}>
+            <span style={{fontSize:10,fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em'}}>Adgangskode</span>
+            <input type="password" autoComplete={mode==='signup'?'new-password':'current-password'} required minLength={6} value={password} onChange={e=>setPassword(e.target.value)}
+              style={{padding:'9px 11px',border:'1px solid #e2e8f0',borderRadius:7,fontSize:14,fontFamily:'inherit',outline:'none'}}/>
+          </label>
+          {msg&&<div style={{fontSize:12,padding:'8px 10px',borderRadius:6,background:msg.kind==='ok'?'#f0fdf4':'#fef2f2',color:msg.kind==='ok'?'#166534':'#b91c1c'}}>{msg.text}</div>}
+          <button type="submit" disabled={busy}
+            style={{marginTop:4,padding:'10px 14px',border:'none',borderRadius:7,background:accent,color:'white',fontSize:14,fontWeight:600,fontFamily:'inherit',cursor:busy?'wait':'pointer',opacity:busy?.7:1}}>
+            {busy?'…':(mode==='signup'?'Opret konto':'Log ind')}
+          </button>
+        </form>
+        <button onClick={()=>{setMode(mode==='signin'?'signup':'signin');setMsg(null)}}
+          style={{marginTop:14,border:'none',background:'transparent',color:accent,cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'inherit'}}>
+          {mode==='signin'?'Ingen konto? Opret en':'Har du en konto? Log ind'}
+        </button>
+        {(SUPABASE_URL.includes('YOUR-PROJECT')||SUPABASE_ANON_KEY.includes('YOUR_ANON'))&&
+          <div style={{marginTop:18,padding:'8px 10px',borderRadius:6,background:'#fffbeb',border:'1px solid #fde68a',fontSize:11,color:'#92400e',lineHeight:1.5}}>
+            ⚠ Supabase-konfiguration mangler. Åbn Byggebudget.html og udfyld <code>SUPABASE_URL</code> og <code>SUPABASE_ANON_KEY</code> øverst i scriptet.
+          </div>}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ROOT — routes between LoginScreen and BudgetApp
+// ═══════════════════════════════════════════════════════════════════
+function App(){
+  const [session,setSession]=useState(null);
+  const [checking,setChecking]=useState(true);
+  useEffect(()=>{
+    supabase.auth.getSession().then(({data})=>{setSession(data.session);setChecking(false)});
+    const {data:{subscription}}=supabase.auth.onAuthStateChange((_e,s)=>setSession(s));
+    return()=>subscription.unsubscribe();
+  },[]);
+  if(checking)return <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',color:'#64748b',fontSize:13}}>Indlæser…</div>;
+  if(!session)return <LoginScreen/>;
+  return <BudgetApp session={session} key={session.user.id}/>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// BUDGET APP (the original UI, now backed by Supabase)
+// ═══════════════════════════════════════════════════════════════════
+function BudgetApp({session}){
+  const userId=session.user.id;
+  const userEmail=session.user.email;
+
+  const [data,setData]=useState([]);
+  const [subCalcs,setSubCalcs]=useState([]);
+  const [categories,setCategories]=useState(DEFAULT_CATEGORIES);
+  const [receipts,setReceipts]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [loadError,setLoadError]=useState(null);
+  const hydratedRef=useRef(false);
+
+  const [viewReceipt,setViewReceipt]=useState(null);
+  const [analyzing,setAnalyzing]=useState(null);
+  const [detailLevel,setDetailLevel]=useState(()=>{const s=localStorage.getItem('byggebudget_level');return s?parseInt(s):5;});
+  const [collapsed,setCollapsed]=useState(new Set());
+  const [selectedId,setSelectedId]=useState(null);
+  const [editingCell,setEditingCell]=useState(null);
+  const [editingLink,setEditingLink]=useState(null);
+  const [activeTab,setActiveTab]=useState('budget');
+  const [oversigtFilter,setOversigtFilter]=useState('all');
+  const [kobView,setKobView]=useState('liste'); // 'liste' | 'galleri'
+  const [subcalcFor,setSubcalcFor]=useState(null); // id of row whose subcalc picker is open
+  const [editFaserOpen,setEditFaserOpen]=useState(false);
+  const [toast,setToast]=useState(null);
+  const [tweaks,setTweaks]=useState(TWEAK_DEFAULTS);
+  const [tweaksVisible,setTweaksVisible]=useState(false);
+  const [expandedCats,setExpandedCats]=useState(new Set());
+  const [stuckL2,setStuckL2]=useState(new Set());
+  const [isMobile,setIsMobile]=useState(window.innerWidth<=700);
+  const tableRef=useRef(null);
+  const stickyHeaderH=128;
+
+  const showToast=msg=>{setToast(msg);setTimeout(()=>setToast(null),2500)};
+
+  // Initial hydration from Supabase ───────────────────────────────
+  useEffect(()=>{
+    (async()=>{
+      try{
+        const {data:row,error}=await supabase.from('user_budgets').select('data, sub_calcs').eq('user_id',userId).maybeSingle();
+        if(error)throw error;
+        let nextData, nextSC, nextCats;
+        if(row){
+          nextData=Array.isArray(row.data)?row.data:createInitialData();
+          const scRaw=row.sub_calcs;
+          if(Array.isArray(scRaw)){
+            // Legacy shape: sub_calcs is just an array. Categories fall back to defaults.
+            nextSC=scRaw;
+            nextCats=DEFAULT_CATEGORIES;
+          }else{
+            nextSC=Array.isArray(scRaw?.subCalcs)?scRaw.subCalcs:defaultSubCalcs();
+            nextCats=Array.isArray(scRaw?.categories)&&scRaw.categories.length?scRaw.categories:DEFAULT_CATEGORIES;
+          }
+        }else{
+          nextData=createInitialData();
+          nextSC=defaultSubCalcs();
+          nextCats=DEFAULT_CATEGORIES;
+          const {error:insErr}=await supabase.from('user_budgets').insert({user_id:userId,data:nextData,sub_calcs:{subCalcs:nextSC,categories:nextCats}});
+          if(insErr)throw insErr;
+        }
+        setData(nextData);
+        setSubCalcs(nextSC);
+        setCategories(nextCats);
+
+        const {data:rs,error:rErr}=await supabase.from('receipts').select('*').eq('user_id',userId).order('created',{ascending:false});
+        if(rErr)throw rErr;
+        const withUrls=await Promise.all((rs||[]).map(async r=>{
+          let imageUrl=null;
+          if(r.image_path){
+            const {data:u}=await supabase.storage.from('receipts').createSignedUrl(r.image_path,86400);
+            imageUrl=u?.signedUrl||null;
+          }
+          return{id:r.id,image:imageUrl,imagePath:r.image_path,store:r.store||'',date:r.date||'',note:r.note||'',lines:r.lines||[],created:r.created?new Date(r.created).getTime():Date.now()};
+        }));
+        setReceipts(withUrls);
+      }catch(e){
+        console.error('Load failed:',e);
+        setLoadError(e.message||'Kunne ikke hente data');
+      }finally{
+        setLoading(false);
+        hydratedRef.current=true;
+      }
+    })();
+  },[userId]);
+
+  // Debounced save of budget + sub-calcs + categories whenever they change — silent.
+  const saveTimer=useRef(null);
+  useEffect(()=>{
+    if(!hydratedRef.current)return;
+    if(saveTimer.current)clearTimeout(saveTimer.current);
+    saveTimer.current=setTimeout(async()=>{
+      const {error}=await supabase.from('user_budgets').upsert({user_id:userId,data,sub_calcs:{subCalcs,categories}});
+      if(error){console.warn('Save failed:',error);showToast('Kunne ikke gemme: '+error.message);}
+    },1200);
+  },[data,subCalcs,categories,userId]);
+
+  // Per-receipt debounced save ────────────────────────────────────
+  const receiptsRef=useRef([]);
+  useEffect(()=>{receiptsRef.current=receipts},[receipts]);
+  const receiptTimers=useRef({});
+  const saveReceiptDebounced=(rid)=>{
+    clearTimeout(receiptTimers.current[rid]);
+    receiptTimers.current[rid]=setTimeout(async()=>{
+      const r=receiptsRef.current.find(x=>x.id===rid);
+      if(!r)return;
+      const {error}=await supabase.from('receipts').update({store:r.store,date:r.date||null,note:r.note,lines:r.lines}).eq('id',rid);
+      if(error)console.warn('Receipt save failed:',error);
+    },600);
+  };
+
+  useEffect(()=>{const h=()=>setIsMobile(window.innerWidth<=700);window.addEventListener('resize',h);return()=>window.removeEventListener('resize',h)},[]);
+
+  useEffect(()=>{
+    const h=e=>{if(e.data?.type==='__activate_edit_mode')setTweaksVisible(true);if(e.data?.type==='__deactivate_edit_mode')setTweaksVisible(false);};
+    window.addEventListener('message',h);try{window.parent.postMessage({type:'__edit_mode_available'},'*')}catch(_){}
+    return()=>window.removeEventListener('message',h);
+  },[]);
+  useEffect(()=>{localStorage.setItem('byggebudget_level',detailLevel)},[detailLevel]);
+
+  // Shrink image for AI and storage (cheaper + faster) ────────────
+  const shrinkImage=(dataUrl,maxW=1400)=>new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      const scale=Math.min(1,maxW/img.width);
+      const w=Math.round(img.width*scale),h=Math.round(img.height*scale);
+      const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+      cv.getContext('2d').drawImage(img,0,0,w,h);
+      resolve(cv.toDataURL('image/jpeg',0.85));
+    };
+    img.onerror=()=>resolve(dataUrl);
+    img.src=dataUrl;
+  });
+
+  const blobToDataUrl=blob=>new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(blob)});
+  const dataUrlToBlob=dataUrl=>fetch(dataUrl).then(r=>r.blob());
+
+  const analyzeReceipt=async(receiptId)=>{
+    const r=receiptsRef.current.find(x=>x.id===receiptId);if(!r)return;
+    setAnalyzing(receiptId);
+    try{
+      const leafList=data.filter(d=>!d.children?.length&&d.level>=3).map(d=>'- '+d.id+': '+d.desc).join('\n');
+      // Obtain base64 of the (shrunken) image
+      let base64=r.imageData?.split(',')[1];
+      if(!base64){
+        const src=r.image;
+        if(!src)throw new Error('Intet billede');
+        const blob=await fetch(src).then(x=>x.blob());
+        const dataUrl=await blobToDataUrl(blob);
+        const shrunk=await shrinkImage(dataUrl);
+        base64=shrunk.split(',')[1];
+      }
+      const {data:parsed,error}=await supabase.functions.invoke('analyze-receipt',{body:{imageBase64:base64,mediaType:'image/jpeg',leafList}});
+      if(error)throw error;
+      if(parsed?.error)throw new Error(parsed.error);
+
+      let lines=(parsed.lines||[]).map((l,i)=>({id:'l'+Date.now()+'-'+i,desc:l.desc||'',amount:l.amount!=null?Number(l.amount):0,linkedId:l.suggestedId||''}));
+      const ti=Number(parsed.totalIncl)||0;
+      if(ti>0&&lines.length){
+        const lineSum=lines.reduce((s,l)=>s+(l.amount||0),0);
+        const ratio=lineSum/ti;
+        if(ratio>0.75&&ratio<0.85){
+          lines=lines.map(l=>({...l,amount:Math.round(l.amount*1.25*100)/100}));
+        }
+      }
+      const linesStr=lines.map(l=>({...l,amount:l.amount?String(l.amount):''}));
+
+      setReceipts(p=>p.map(x=>x.id!==receiptId?x:{...x,store:parsed.store||x.store||'',date:parsed.date||x.date,lines:linesStr.length?linesStr:x.lines}));
+      saveReceiptDebounced(receiptId);
+      showToast('Kvittering analyseret ('+(parsed.lines||[]).length+' linjer)');
+    }catch(e){
+      console.warn('Receipt analysis failed:',e);
+      showToast('Kunne ikke analysere: '+(e.message||'ukendt fejl'));
+    }finally{
+      setAnalyzing(null);
+    }
+  };
+
+  const addReceiptFromFile=(file,auto=true)=>{
+    if(!file)return;
+    const reader=new FileReader();
+    reader.onload=async()=>{
+      try{
+        const rid='r'+Date.now();
+        const path=`${userId}/${rid}.jpg`;
+        const shrunk=await shrinkImage(reader.result,1600);
+        const blob=await dataUrlToBlob(shrunk);
+        const {error:upErr}=await supabase.storage.from('receipts').upload(path,blob,{contentType:'image/jpeg',upsert:true});
+        if(upErr)throw upErr;
+        const today=new Date().toISOString().slice(0,10);
+        const initialLines=[{id:'l0',desc:'',amount:'',linkedId:''}];
+        const {error:dbErr}=await supabase.from('receipts').insert({id:rid,user_id:userId,image_path:path,store:'',date:today,note:'',lines:initialLines});
+        if(dbErr)throw dbErr;
+        const {data:u}=await supabase.storage.from('receipts').createSignedUrl(path,86400);
+        const nr={id:rid,image:u?.signedUrl||shrunk,imageData:shrunk,imagePath:path,store:'',date:today,note:'',lines:initialLines,created:Date.now()};
+        setReceipts(p=>[nr,...p]);
+        setViewReceipt(rid);
+        if(auto)setTimeout(()=>analyzeReceipt(rid),100);
+      }catch(e){
+        console.warn('Add receipt failed:',e);
+        showToast('Kunne ikke tilføje kvittering: '+(e.message||'ukendt fejl'));
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const addManualReceipt=async()=>{
+    try{
+      const rid='r'+Date.now();
+      const today=new Date().toISOString().slice(0,10);
+      const initialLines=[{id:'l0',desc:'',amount:'',linkedId:''}];
+      const {error}=await supabase.from('receipts').insert({id:rid,user_id:userId,image_path:null,store:'',date:today,note:'',lines:initialLines});
+      if(error)throw error;
+      const nr={id:rid,image:null,imageData:null,imagePath:null,store:'',date:today,note:'',lines:initialLines,created:Date.now()};
+      setReceipts(p=>[nr,...p]);
+      setViewReceipt(rid);
+    }catch(e){
+      console.warn('Manual receipt failed:',e);
+      showToast('Kunne ikke oprette: '+(e.message||'ukendt fejl'));
+    }
+  };
+
+  const deleteReceipt=async(rid)=>{
+    const r=receiptsRef.current.find(x=>x.id===rid);
+    setReceipts(p=>p.filter(x=>x.id!==rid));
+    try{
+      if(r?.imagePath)await supabase.storage.from('receipts').remove([r.imagePath]);
+      await supabase.from('receipts').delete().eq('id',rid);
+    }catch(e){console.warn('Delete failed:',e);}
+  };
+
+  const signOut=async()=>{await supabase.auth.signOut();};
+
+  const dataMap=useMemo(()=>{const m=new Map();data.forEach(d=>m.set(d.id,d));return m},[data]);
+  const receiptSums=useMemo(()=>{const m=new Map();receipts.forEach(r=>(r.lines||[]).forEach(l=>{if(l.linkedId&&l.amount){m.set(l.linkedId,(m.get(l.linkedId)||0)+(Number(l.amount)||0));}}));return m;},[receipts]);
+  const subCalcMap=useMemo(()=>{const m=new Map();subCalcs.forEach(s=>m.set(s.id,s));return m},[subCalcs]);
+
+  // Precompute per-row metrics once per data/receipt change. Reading from this map in the
+  // render is O(1) instead of re-running recursive calcSum/calcActual for each visible row.
+  const metricsById=useMemo(()=>{
+    const m=new Map();
+    data.forEach(d=>{
+      const sum=calcSum(d,dataMap);
+      const actual=calcActual(d,dataMap,receiptSums);
+      const sumTracked=calcSumTracked(d,dataMap,receiptSums);
+      const has=hasAnyActual(d,dataMap,receiptSums);
+      m.set(d.id,{sum,actual,sumTracked,hasActual:has,diff:actual-sumTracked});
+    });
+    return m;
+  },[data,dataMap,receiptSums]);
+  const getM=id=>metricsById.get(id)||{sum:0,actual:0,sumTracked:0,hasActual:false,diff:0};
+
+  // Sync subCalc prices into budget rows
+  useEffect(()=>{
+    if(!hydratedRef.current)return;
+    let changed=false;
+    const updated=data.map(d=>{
+      if(d.subCalcRef){const sc=subCalcMap.get(d.subCalcRef);if(sc){const np=Math.round(calcSCT(sc));if(d.pris!==np){changed=true;return{...d,pris:np}}}}
+      return d;
+    });
+    if(changed)setData(updated);
+  },[subCalcs]);
+
+  // Sticky level-2 detection
+  useEffect(()=>{
+    if(activeTab!=='budget')return;
+    const onScroll=()=>{
+      const stuck=new Set();
+      document.querySelectorAll('[data-row-level="2"]').forEach(el=>{
+        const id=el.getAttribute('data-row-id');
+        const rect=el.getBoundingClientRect();
+        const stickyTop=parseFloat(el.style.top)||0;
+        if(Math.abs(rect.top-stickyTop)<3){
+          const item=dataMap.get(id);
+          if(item?.children?.length){
+            const findLastDesc=(it)=>{
+              if(!it.children||!it.children.length)return it;
+              const lastChildId=it.children[it.children.length-1];
+              const lastChild=dataMap.get(lastChildId);
+              if(!lastChild)return it;
+              if(collapsed.has(it.id))return it;
+              return findLastDesc(lastChild);
+            };
+            const lastDesc=findLastDesc(item);
+            const lastEl=document.querySelector('[data-row-id="'+lastDesc.id+'"]');
+            if(lastEl){
+              const lastRect=lastEl.getBoundingClientRect();
+              if(lastRect.bottom<=rect.bottom+2) stuck.add(id);
+            }
+          }
+        }
+      });
+      setStuckL2(prev=>{
+        if(prev.size===stuck.size&&[...prev].every(id=>stuck.has(id)))return prev;
+        return stuck;
+      });
+    };
+    onScroll();
+    window.addEventListener('scroll',onScroll,{passive:true});
+    return()=>window.removeEventListener('scroll',onScroll);
+  },[activeTab,dataMap,collapsed]);
+
+  const toggleCollapse=id=>setCollapsed(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});
+  const isVisible=item=>{
+    if(item.level>detailLevel)return false;
+    let cur=item;while(cur.parent){if(collapsed.has(cur.parent))return false;cur=dataMap.get(cur.parent);if(!cur)break;}return true;
+  };
+
+  const getEffectiveKategori=(item)=>{
+    if(item.kategori)return item.kategori;
+    let cur=item;
+    while(cur.parent){cur=dataMap.get(cur.parent);if(!cur)break;if(cur.kategori)return cur.kategori;}
+    return '';
+  };
+
+  const lvl2StickyMap=useMemo(()=>{
+    const m=new Map();let count=0;
+    data.filter(isVisible).forEach(item=>{
+      if(item.level===1){count=0;}
+      if(item.level===2){m.set(item.id,count);count++;}
+    });return m;
+  },[data,detailLevel,collapsed]);
+
+  const updateItem=(id,field,value)=>setData(p=>p.map(d=>d.id===id?{...d,[field]:value}:d));
+
+  const addChild=parentId=>{
+    const parent=dataMap.get(parentId);if(!parent||parent.level>=MAX_LEVEL)return;
+    const existing=parent.children||[];const newId=parentId+'.'+(existing.length+1);
+    const newItem={id:newId,level:parent.level+1,desc:'Ny post',parent:parentId,antal:0,pris:0,enhed:'stk',kategori:''};
+    setData(prev=>{
+      const u=prev.map(d=>d.id===parentId?{...d,children:[...(d.children||[]),newId]}:d);
+      const pidx=u.findIndex(d=>d.id===parentId);let ins=pidx+1;
+      while(ins<u.length&&u[ins].level>parent.level)ins++;
+      u.splice(ins,0,newItem);return[...u];
+    });
+  };
+
+  const addTopLevel=()=>{
+    const top=data.filter(d=>d.level===1);
+    const nextN=top.length?Math.max(...top.map(d=>parseInt(d.id,10)||0))+1:1;
+    const newId=String(nextN);
+    const newItem={id:newId,level:1,desc:'Nyt hovedprojekt',children:[]};
+    setData(prev=>[...prev,newItem]);
+  };
+
+  const deleteItem=id=>{
+    const item=dataMap.get(id);if(!item)return;
+    const rem=new Set();const collect=i=>{rem.add(i);const it=dataMap.get(i);if(it?.children)it.children.forEach(collect);};collect(id);
+    setData(prev=>{let u=prev.filter(d=>!rem.has(d.id));if(item.parent)u=u.map(d=>d.id===item.parent?{...d,children:(d.children||[]).filter(c=>c!==id)}:d);return u;});
+    if(selectedId===id)setSelectedId(null);
+  };
+
+  // Paste handler ─────────────────────────────────────────────────
+  const handlePaste=useCallback(e=>{
+    if(activeTab!=='budget'||editingCell)return;
+    const text=e.clipboardData?.getData('text/plain');
+    if(!text||!text.includes('\t'))return;
+    e.preventDefault();
+    const lines=text.trim().split('\n').map(l=>l.split('\t'));
+    const first=lines[0];
+    const isHeader=first.some(c=>/^(gruppering|hjælpe|beskrivelse|kode|antal|pris|niveau|sum|kategori|prissummering|link)/i.test(c.trim()));
+    const dataLines=isHeader?lines.slice(1):lines;
+    const isExcelFormat=dataLines.some(cols=>/^\d+(\.\d+)*$/.test(cols[0]?.trim()));
+    if(isExcelFormat){
+      const newItems=[];const idSet=new Set(data.map(d=>d.id));
+      dataLines.forEach(cols=>{
+        if(cols.length<3)return;
+        const grp=cols[0]?.trim();if(!grp)return;
+        const desc=cols[2]?.trim()||'';const link=cols[3]?.trim()||'';
+        const antal=cols[4]?parseDK(cols[4]):null;const pris=cols[5]?parseDK(cols[5]):null;
+        const prisSum=cols[6]?parseDK(cols[6]):null;
+        const level=grp.split('.').length;
+        const parentId=grp.includes('.')?grp.substring(0,grp.lastIndexOf('.')):null;
+        if(idSet.has(grp))return;idSet.add(grp);
+        const item={id:grp,level,desc,parent:parentId||undefined,enhed:'',kategori:''};
+        if(link)item.link=link;
+        if(antal!=null&&pris!=null){item.antal=antal;item.pris=pris;}
+        else if(prisSum!=null&&prisSum>0&&antal==null){item.prisSum=prisSum;}
+        newItems.push(item);
+      });
+      if(!newItems.length)return;
+      const childMap={};
+      newItems.forEach(it=>{if(it.parent){if(!childMap[it.parent])childMap[it.parent]=[];childMap[it.parent].push(it.id);}});
+      setData(prev=>{
+        let u=[...prev];
+        Object.entries(childMap).forEach(([pid,cids])=>{
+          const ei=u.findIndex(d=>d.id===pid);
+          if(ei>=0){const ex=u[ei].children||[];u[ei]={...u[ei],children:[...ex,...cids.filter(c=>!ex.includes(c))]};}
+        });
+        newItems.forEach(it=>{if(childMap[it.id])it.children=childMap[it.id];});
+        newItems.forEach(item=>{
+          if(u.find(d=>d.id===item.id))return;
+          if(item.parent){const pidx=u.findIndex(d=>d.id===item.parent);if(pidx>=0){let ins=pidx+1;while(ins<u.length&&u[ins].level>u[pidx].level)ins++;u.splice(ins,0,item);}else u.push(item);}
+          else u.push(item);
+        });return[...u];
+      });
+      showToast(`${newItems.length} poster importeret`);
+    } else {
+      let parentId=selectedId;
+      if(!parentId){const p=data.filter(d=>d.level<=3&&d.children);parentId=p.length?p[p.length-1].id:'1';}
+      const parent=dataMap.get(parentId);if(!parent||parent.level>=MAX_LEVEL)return;
+      const newItems=[];let idx=(parent.children||[]).length;
+      dataLines.forEach(cols=>{if(cols.length<2)return;idx++;const nid=parentId+'.'+idx;
+        newItems.push({id:nid,level:parent.level+1,desc:(cols[1]||cols[0]||'').trim(),parent:parentId,enhed:'',antal:parseDK(cols[3]),pris:parseDK(cols[4]),kategori:''});
+      });
+      if(!newItems.length)return;
+      setData(prev=>{let u=prev.map(d=>d.id===parentId?{...d,children:[...(d.children||[]),...newItems.map(n=>n.id)]}:d);const pidx=u.findIndex(d=>d.id===parentId);let ins=pidx+1;while(ins<u.length&&u[ins].level>parent.level)ins++;u.splice(ins,0,...newItems);return[...u];});
+      showToast(`${newItems.length} rækker indsat`);
+    }
+  },[activeTab,editingCell,selectedId,data,dataMap]);
+  useEffect(()=>{document.addEventListener('paste',handlePaste);return()=>document.removeEventListener('paste',handlePaste)},[handlePaste]);
+
+  const copyToClipboard=()=>{
+    const vis=data.filter(isVisible);
+    const header=['Gruppering','Hjælpe','Beskrivelse','Link','Antal','Pris','Prissummering','Enhed','Kategori'].join('\t');
+    const rows=vis.map(item=>{
+      const sum=calcSum(item,dataMap);
+      return[item.id,item.parent||'',item.desc,item.link||'',item.antal!=null?item.antal:'',item.pris!=null?item.pris:'',sum,item.enhed||'',getEffectiveKategori(item)].join('\t');
+    });
+    navigator.clipboard.writeText(header+'\n'+rows.join('\n')).then(()=>showToast('Kopieret'));
+  };
+
+  const EditableCell=({id,field,value,numeric,align,decimals})=>{
+    const isEd=editingCell?.id===id&&editingCell?.field===field;
+    const[tmp,setTmp]=useState(String(value??''));
+    useEffect(()=>{setTmp(String(value??''))},[value]);
+    const formatter=decimals?fmt2:fmt;
+    if(!isEd)return<span onClick={e=>{e.stopPropagation();setEditingCell({id,field});setTmp(value==null||value===''?'':String(value))}} style={{cursor:'text',display:'block',width:'100%',minHeight:18,textAlign:align||'left'}}>{numeric&&value!=null&&value!==''?formatter(value):(value??(numeric?<span style={{color:'#cbd5e1'}}>—</span>:''))}</span>;
+    return<input autoFocus value={tmp} onChange={e=>setTmp(e.target.value)} onFocus={e=>e.target.select()} inputMode={numeric?'decimal':'text'}
+      onBlur={()=>{
+        const trimmed=tmp.trim();
+        const v=numeric?(trimmed===''?null:parseDK(trimmed)):tmp;
+        updateItem(id,field,v);
+        setEditingCell(null);
+      }}
+      onKeyDown={e=>{if(e.key==='Enter')e.target.blur();if(e.key==='Escape')setEditingCell(null)}}
+      style={{width:'100%',border:'2px solid '+tweaks.accentColor,borderRadius:4,padding:'2px 6px',fontSize:'inherit',fontFamily:'inherit',textAlign:align||'left',outline:'none',background:'white'}}/>;
+  };
+
+  const SelectCell=({id,field,value,options})=>(
+    <select value={value||''} onChange={e=>updateItem(id,field,e.target.value)} onClick={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()}
+      style={{border:'none',background:'transparent',fontSize:11,color:'#475569',fontFamily:'inherit',cursor:'pointer',width:'100%',outline:'none',padding:0,margin:0,height:18,lineHeight:'18px',appearance:'none',WebkitAppearance:'none',MozAppearance:'none',boxSizing:'border-box',maxWidth:'100%'}}>
+      {options.map(o=><option key={typeof o==='string'?o:o.value} value={typeof o==='string'?o:o.value}>{typeof o==='string'?(o||'—'):o.label}</option>)}
+    </select>
+  );
+
+  const levelColors={
+    1:{bg:'#1e293b',color:'#fff',fw:700,fs:14},
+    2:{bg:'#e8eef6',color:'#1e293b',fw:700,fs:13},
+    3:{bg:'#f1f5f9',color:'#334155',fw:600,fs:13},
+    4:{bg:'#fafafa',color:'#475569',fw:400,fs:12},
+    5:{bg:'#ffffff',color:'#64748b',fw:400,fs:12},
+  };
+
+  // These useMemo calls must run on every render (Rules of Hooks) — keep them above the early returns below.
+  const catDetails=useMemo(()=>{
+    const byCat={};
+    data.forEach(d=>{
+      if(d.children?.length)return;
+      const cat=getEffectiveKategori(d)||'Ikke tildelt';
+      if(!byCat[cat])byCat[cat]={sum:0,sumTracked:0,actual:0,leafIds:new Set()};
+      const s=calcSum(d,dataMap);
+      byCat[cat].sum+=s;
+      byCat[cat].sumTracked+=calcSumTracked(d,dataMap,receiptSums);
+      byCat[cat].actual+=calcActual(d,dataMap,receiptSums);
+      byCat[cat].leafIds.add(d.id);
+    });
+    return Object.entries(byCat).map(([cat,{sum,sumTracked,actual,leafIds}])=>{
+      const includeIds=new Set();
+      leafIds.forEach(id=>{includeIds.add(id);let cur=dataMap.get(id);while(cur?.parent){includeIds.add(cur.parent);cur=dataMap.get(cur.parent);}});
+      const rows=data.filter(d=>includeIds.has(d.id)).map(d=>{
+        const catSum=(function subSum(item){if(!item.children||!item.children.length){return leafIds.has(item.id)?calcSum(item,dataMap):0;}return item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+subSum(c):s;},0);})(d);
+        const catAct=(function subAct(item){if(!item.children||!item.children.length){return leafIds.has(item.id)?calcActual(item,dataMap,receiptSums):0;}return item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+subAct(c):s;},0);})(d);
+        const catSumTracked=(function subST(item){if(!item.children||!item.children.length){return leafIds.has(item.id)&&hasAnyActual(item,dataMap,receiptSums)?calcSum(item,dataMap):0;}return item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+subST(c):s;},0);})(d);
+        const catHasAct=(function subHasAct(item){if(!item.children||!item.children.length){return leafIds.has(item.id)&&hasAnyActual(item,dataMap,receiptSums);}return item.children.some(cid=>{const c=dataMap.get(cid);return c&&subHasAct(c);});})(d);
+        return{...d,catSum,catAct,catSumTracked,catHasAct,isLeafInCat:leafIds.has(d.id)};
+      });
+      const diff=actual-sumTracked;
+      return{cat,sum,actual,diff,hasActual:rows.some(r=>r.catHasAct),rows};
+    }).sort((a,b)=>a.cat.localeCompare(b.cat));
+  },[data,dataMap,collapsed,receipts,receiptSums]);
+
+  const scOptions=useMemo(()=>[{value:'',label:'— Ingen —'},...subCalcs.map(sc=>({value:sc.id,label:sc.name+' ('+fmt(Math.round(calcSCT(sc)))+' kr/'+sc.unit+')'}))],[subCalcs]);
+  const catOptions=useMemo(()=>['',...categories],[categories]);
+
+  const addCategory=()=>{
+    let base='Ny fase',name=base,n=1;
+    while(categories.includes(name)){n++;name=base+' '+n;}
+    setCategories(p=>[...p,name]);
+  };
+  const renameCategory=(oldName,newName)=>{
+    const trimmed=(newName||'').trim();
+    if(!trimmed||trimmed===oldName)return;
+    if(categories.includes(trimmed)){showToast('"'+trimmed+'" findes allerede');return;}
+    setCategories(p=>p.map(c=>c===oldName?trimmed:c));
+    setData(p=>p.map(d=>d.kategori===oldName?{...d,kategori:trimmed}:d));
+  };
+  const deleteCategory=(name)=>{
+    const used=data.some(d=>d.kategori===name);
+    const msg=used
+      ?'Slet fasen "'+name+'"? Den er brugt på nogle poster — deres fase bliver ryddet.'
+      :'Slet fasen "'+name+'"?';
+    if(!confirm(msg))return;
+    setCategories(p=>p.filter(c=>c!==name));
+    if(used)setData(p=>p.map(d=>d.kategori===name?{...d,kategori:''}:d));
+  };
+
+  if(loading)return <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',color:'#64748b',fontSize:13}}>Henter dit budget…</div>;
+  if(loadError)return(
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+      <div style={{background:'white',borderRadius:12,padding:24,maxWidth:420,boxShadow:'0 4px 16px rgba(0,0,0,0.06)'}}>
+        <h2 style={{fontSize:16,fontWeight:700,color:'#b91c1c',marginBottom:8}}>Kunne ikke hente data</h2>
+        <p style={{fontSize:13,color:'#64748b',marginBottom:14}}>{loadError}</p>
+        <button onClick={signOut} style={{padding:'7px 12px',borderRadius:6,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>Log ud</button>
+      </div>
+    </div>
+  );
+
+  const visibleData=data.filter(isVisible);
+  const totalSum=data.filter(d=>d.level===1).reduce((s,d)=>s+calcSum(d,dataMap),0);
+  const totalActual=data.filter(d=>d.level===1).reduce((s,d)=>s+calcActual(d,dataMap,receiptSums),0);
+  const totalSumTracked=data.filter(d=>d.level===1).reduce((s,d)=>s+calcSumTracked(d,dataMap,receiptSums),0);
+  const anyActual=data.filter(d=>d.level===1).some(d=>hasAnyActual(d,dataMap,receiptSums));
+  const totalDiff=totalActual-totalSumTracked;
+
+  const gridCols=isMobile?'40px 1fr 80px 30px':'52px 1.3fr 60px 48px 82px 92px 92px 72px 100px 36px';
+  const selectedItem=selectedId?dataMap.get(selectedId):null;
+
+  const LinkEditor=({item})=>{
+    const[val,setVal]=useState(item.link||'');
+    return(
+      <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.3)',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center'}}
+        onClick={()=>setEditingLink(null)}>
+        <div style={{background:'white',borderRadius:12,padding:20,width:400,maxWidth:'90vw',boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}} onClick={e=>e.stopPropagation()}>
+          <h3 style={{fontSize:14,fontWeight:700,marginBottom:8}}>Link for "{item.desc}"</h3>
+          <input value={val} onChange={e=>setVal(e.target.value)} placeholder="https://..." autoFocus
+            style={{width:'100%',padding:'8px 12px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,fontFamily:'inherit',outline:'none',marginBottom:12}}/>
+          <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+            {item.link&&<button onClick={()=>{updateItem(item.id,'link','');setEditingLink(null)}} style={{padding:'6px 12px',borderRadius:6,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:12,fontFamily:'inherit',color:'#dc2626'}}>Fjern link</button>}
+            <button onClick={()=>setEditingLink(null)} style={{padding:'6px 12px',borderRadius:6,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>Annuller</button>
+            <button onClick={()=>{updateItem(item.id,'link',val);setEditingLink(null)}} style={{padding:'6px 12px',borderRadius:6,border:'none',background:tweaks.accentColor,color:'white',cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'inherit'}}>Gem</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const MobileRow=({item})=>{
+    const {sum,actual,hasActual,diff}=getM(item.id);
+    const lc=levelColors[item.level]||levelColors[5];
+    const hasKids=item.children?.length>0;const isCol=collapsed.has(item.id);const isSel=selectedId===item.id;
+    const indent=(item.level-1)*12;const effKat=getEffectiveKategori(item);
+    const hasSC=!!item.subCalcRef;const canAddChild=item.level<MAX_LEVEL;
+    return(
+      <div onClick={()=>setSelectedId(item.id)} style={{padding:'8px 10px',paddingLeft:10+indent,background:isSel?'#dbeafe':lc.bg,borderBottom:'1px solid #e8ecf0'}}>
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          {hasKids?<button onClick={e=>{e.stopPropagation();toggleCollapse(item.id)}} style={{width:20,height:20,border:'none',background:'transparent',cursor:'pointer',fontSize:10,color:'#64748b',transform:isCol?'rotate(-90deg)':'rotate(0)',transition:'transform .15s',flexShrink:0}}>▼</button>
+            :<span style={{width:20,flexShrink:0}}/>}
+          {!isSel&&<div style={{flex:1,minWidth:0,fontWeight:lc.fw,fontSize:lc.fs,color:lc.color,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.desc}</div>}
+          {isSel&&<div style={{flex:1}}/>}
+          <span style={{fontWeight:700,fontSize:13,color:item.level===1?'#fff':sum<0?'#059669':'#1e293b',whiteSpace:'nowrap'}}>{fmt(sum)}</span>
+          {!isSel&&item.level>=2&&<span style={{fontSize:9,fontWeight:600,color:item.level===1?'rgba(255,255,255,.8)':'#64748b',background:item.level===1?'rgba(255,255,255,.12)':'#fff',border:item.level===1?'none':'1px solid #e2e8f0',borderRadius:3,padding:'1px 5px',whiteSpace:'nowrap',flexShrink:0,minWidth:56,textAlign:'center'}}>{effKat||''}</span>}
+        </div>
+        {!isSel&&hasActual&&(
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:2,paddingLeft:26,fontSize:10}}>
+            <span style={{color:item.level===1?'rgba(255,255,255,.75)':'#64748b'}}>Faktisk: <strong style={{color:item.level===1?'#fff':'#334155'}}>{fmt(actual)}</strong></span>
+            <span style={{fontWeight:600,color:item.level===1?(diff>0?'#fecaca':diff<0?'#bbf7d0':'rgba(255,255,255,.7)'):(diff>0?'#dc2626':diff<0?'#16a34a':'#64748b')}}>{diff===0?'✓':(diff>0?'+':'')+fmt(Math.round(diff))}</span>
+          </div>
+        )}
+        {isSel&&(
+          <div onClick={e=>e.stopPropagation()} style={{marginTop:8,paddingLeft:26,display:'flex',flexDirection:'column',gap:6}}>
+            <label style={{display:'flex',flexDirection:'column',gap:2,fontSize:11}}>
+              <span style={{color:'#64748b',fontSize:9,fontWeight:600,textTransform:'uppercase'}}>Beskrivelse</span>
+              <div style={{background:'white',border:'1px solid #e2e8f0',borderRadius:4,padding:'4px 6px',minHeight:26}}>
+                <EditableCell id={item.id} field="desc" value={item.desc}/>
+              </div>
+            </label>
+            {item.level>=3&&(
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,fontSize:11,minWidth:0}}>
+                <label style={{display:'flex',flexDirection:'column',gap:2}}>
+                  <span style={{color:'#64748b',fontSize:9,fontWeight:600,textTransform:'uppercase'}}>Antal</span>
+                  <div style={{background:'white',border:'1px solid #e2e8f0',borderRadius:4,padding:'4px 6px',minHeight:26}}>
+                    <EditableCell id={item.id} field="antal" value={item.antal} numeric/>
+                  </div>
+                </label>
+                <label style={{display:'flex',flexDirection:'column',gap:2}}>
+                  <span style={{color:'#64748b',fontSize:9,fontWeight:600,textTransform:'uppercase'}}>Enhed</span>
+                  <div style={{background:'white',border:'1px solid #e2e8f0',borderRadius:4,padding:'4px 6px',minHeight:26}}>
+                    <SelectCell id={item.id} field="enhed" value={item.enhed} options={UNITS}/>
+                  </div>
+                </label>
+                <label style={{display:'flex',flexDirection:'column',gap:2}}>
+                  <span style={{color:'#64748b',fontSize:9,fontWeight:600,textTransform:'uppercase'}}>Pris</span>
+                  <div style={{background:'white',border:'1px solid #e2e8f0',borderRadius:4,padding:'4px 6px',minHeight:26}}>
+                    {hasSC?<span style={{color:tweaks.accentColor,fontSize:11}}>{fmt2(item.pris)}</span>:<EditableCell id={item.id} field="pris" value={item.pris} numeric decimals/>}
+                  </div>
+                </label>
+              </div>
+            )}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+              <label style={{display:'flex',flexDirection:'column',gap:2,fontSize:11}}>
+                <span style={{color:'#94a3b8',fontSize:9,fontWeight:600,textTransform:'uppercase',display:'flex',alignItems:'center',gap:3}}>Budget <span style={{fontSize:9}}>🔒</span> <span style={{fontSize:8,fontWeight:500,textTransform:'none',color:'#cbd5e1'}}>(beregnet)</span></span>
+                <div style={{background:'#f1f5f9',border:'1px dashed #cbd5e1',borderRadius:4,padding:'4px 6px',minHeight:26,fontWeight:600,color:'#64748b',cursor:'not-allowed'}}>{fmt(sum)}</div>
+              </label>
+              <label style={{display:'flex',flexDirection:'column',gap:2,fontSize:11}}>
+                <span style={{color:'#64748b',fontSize:9,fontWeight:600,textTransform:'uppercase'}}>Faktisk brugt</span>
+                <div style={{background:'white',border:'1px solid #e2e8f0',borderRadius:4,padding:'4px 6px',minHeight:26}}>
+                  {item.children?.length?<span style={{color:'#64748b'}}>{fmt(actual)}</span>:<EditableCell id={item.id} field="faktisk" value={item.faktisk} numeric/>}
+                </div>
+              </label>
+            </div>
+            {hasActual&&(
+              <div style={{fontSize:11,padding:'4px 6px',borderRadius:4,background:diff>0?'#fef2f2':diff<0?'#f0fdf4':'#f8fafc',color:diff>0?'#dc2626':diff<0?'#16a34a':'#64748b',fontWeight:600,display:'flex',justifyContent:'space-between'}}>
+                <span>Afvigelse</span><span>{diff===0?'På budget ✓':(diff>0?'+':'')+fmt(Math.round(diff))+' kr'}</span>
+              </div>
+            )}
+            {item.level>=2&&(
+              <label style={{display:'flex',flexDirection:'column',gap:2,fontSize:11}}>
+                <span style={{color:'#64748b',fontSize:9,fontWeight:600,textTransform:'uppercase'}}>Fase {!item.kategori&&effKat?'(arver: '+effKat+')':''}</span>
+                <div style={{background:'white',border:'1px solid #e2e8f0',borderRadius:4,padding:'4px 6px',minHeight:26}}>
+                  <SelectCell id={item.id} field="kategori" value={item.kategori} options={catOptions}/>
+                </div>
+              </label>
+            )}
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {canAddChild&&<button onClick={()=>addChild(item.id)} style={{padding:'6px 10px',borderRadius:5,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:11,fontWeight:600,color:'#475569',fontFamily:'DM Sans'}}>+ Underpost</button>}
+              <button onClick={()=>setEditingLink(item.id)} style={{padding:'6px 10px',borderRadius:5,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:11,color:'#475569',fontFamily:'DM Sans'}}>{item.link?'✎ Link':'+ Link'}</button>
+              {item.link&&<a href={item.link} target="_blank" rel="noopener" style={{padding:'6px 10px',borderRadius:5,border:'1px solid #e2e8f0',background:'white',fontSize:11,color:tweaks.accentColor,textDecoration:'none',fontFamily:'DM Sans'}}>↗ Åbn</a>}
+              <button onClick={()=>{const msg=item.level===1?'Slet hele projektet "'+item.desc+'" inkl. alle underposter? Dette kan ikke fortrydes.':'Slet "'+item.desc+'"?';if(confirm(msg))deleteItem(item.id)}} style={{padding:'6px 10px',borderRadius:5,border:'1px solid #fecaca',background:'white',cursor:'pointer',fontSize:11,color:'#dc2626',fontFamily:'DM Sans'}}>✕ Slet</button>
+              <button onClick={()=>{setEditingCell(null);setSelectedId(null);if(document.activeElement&&document.activeElement.blur)document.activeElement.blur()}} style={{padding:'6px 14px',borderRadius:5,border:'none',background:tweaks.accentColor,color:'white',cursor:'pointer',fontSize:11,fontWeight:600,fontFamily:'DM Sans',marginLeft:'auto'}}>Færdig</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return(
+    <div style={{minHeight:'100vh',background:'#f0f2f5'}}>
+      {/* ═══ STICKY TOP ═══ */}
+      <div className="sticky-top" style={{padding:'12px 16px 0',boxShadow:'0 2px 8px rgba(0,0,0,0.06)'}}>
+        <div className="mobile-header" style={{maxWidth:1300,margin:'0 auto 8px',display:'flex',alignItems:'flex-end',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+          <div>
+            <h1 style={{fontSize:isMobile?18:22,fontWeight:700,color:'#0f172a',letterSpacing:'-0.02em'}}>Byggebudget</h1>
+            <p style={{color:'#64748b',fontSize:12,marginTop:1}}>
+              Budget: <strong style={{color:'#0f172a',fontSize:isMobile?14:16}}>{fmt(totalSum)} kr</strong>
+              {anyActual&&<span style={{marginLeft:10}}>Faktisk: <strong style={{color:'#0f172a',fontSize:isMobile?14:16}}>{fmt(totalActual)} kr</strong> <span style={{color:totalDiff>0?'#dc2626':totalDiff<0?'#16a34a':'#64748b',fontWeight:600}}>({totalDiff===0?'på budget':(totalDiff>0?'+':'')+fmt(Math.round(totalDiff))+' kr'})</span></span>}
+            </p>
+          </div>
+          <div className="mobile-controls" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+            <div style={{display:'flex',alignItems:'center',gap:4,background:'white',padding:'4px 10px',borderRadius:7,boxShadow:'0 1px 2px rgba(0,0,0,0.06)'}}>
+              <span style={{fontSize:10,fontWeight:600,color:'#64748b'}}>Niveau</span>
+              {[1,2,3,4,5].map(l=><button key={l} onClick={()=>setDetailLevel(l)} style={{width:26,height:26,borderRadius:4,border:'none',cursor:'pointer',fontSize:11,fontWeight:600,fontFamily:'DM Sans',background:detailLevel===l?tweaks.accentColor:'#f1f5f9',color:detailLevel===l?'#fff':'#64748b',transition:'all .15s'}}>{l}</button>)}
+            </div>
+            <button className="desktop-only" onClick={copyToClipboard} style={{padding:'5px 10px',borderRadius:6,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:10,fontWeight:600,color:'#475569',fontFamily:'DM Sans'}}>📋 Kopiér</button>
+            <div style={{display:'flex',alignItems:'center',gap:6,background:'white',padding:'4px 8px',borderRadius:7,boxShadow:'0 1px 2px rgba(0,0,0,0.06)'}}>
+              <span title={userEmail} style={{fontSize:10,color:'#64748b',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{userEmail}</span>
+              <button onClick={signOut} style={{padding:'3px 8px',borderRadius:4,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:10,fontWeight:600,color:'#475569',fontFamily:'DM Sans'}}>Log ud</button>
+            </div>
+          </div>
+        </div>
+        <div style={{maxWidth:1300,margin:'0 auto',display:'flex',gap:2}}>
+          {[['budget','Budget'],['kategorier','Faser'],['subcalc','Underberegninger'],['kob','Køb']].map(([k,l])=>(
+            <button key={k} className="tab-btn" onClick={()=>setActiveTab(k)} style={{background:activeTab===k?'white':'#e2e8f0',color:activeTab===k?'#0f172a':'#64748b',fontSize:isMobile?11:12}}>{l}</button>
+          ))}
+        </div>
+        {activeTab==='budget'&&!isMobile&&(
+          <div style={{maxWidth:1300,margin:'0 auto'}}>
+            <div style={{display:'grid',gridTemplateColumns:gridCols,padding:'7px 10px',background:'#1e293b',color:'#cbd5e1',fontSize:10,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',gap:'0 12px'}}>
+              <span>Kode</span><span>Beskrivelse</span><span style={{textAlign:'right'}}>Antal</span><span>Enhed</span><span style={{textAlign:'right'}}>Enhedspris</span><span style={{textAlign:'right'}}>Budget</span><span style={{textAlign:'right'}}>Faktisk</span><span style={{textAlign:'right'}}>Afvigelse</span><span>Kategori</span><span/>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ═══ KØB TAB — købsjournal + kvitteringer ═══ */}
+      {activeTab==='kob'&&(()=>{
+        // Flatten every receipt line, plus manual `faktisk` entries from the budget tree,
+        // into a single journal array.
+        const allLines=[];
+        receipts.forEach(r=>{
+          (r.lines||[]).forEach(l=>{
+            const linked=l.linkedId?dataMap.get(l.linkedId):null;
+            allLines.push({
+              key:'r-'+r.id+'-'+l.id,
+              source:'receipt',
+              receiptId:r.id,
+              store:r.store||'',
+              date:r.date||'',
+              desc:l.desc||'',
+              amount:Number(l.amount)||0,
+              linkedId:l.linkedId||'',
+              linkedDesc:linked?linked.desc:'',
+              created:r.created||0,
+            });
+          });
+        });
+        data.forEach(d=>{
+          if(d.children?.length)return;
+          if(d.faktisk==null||d.faktisk==='')return;
+          const amount=Number(d.faktisk)||0;
+          if(!amount)return;
+          allLines.push({
+            key:'f-'+d.id,
+            source:'manual-faktisk',
+            itemId:d.id,
+            store:'',
+            date:'',
+            desc:d.desc||'',
+            amount,
+            linkedId:d.id,
+            linkedDesc:d.desc||'',
+            created:0,
+          });
+        });
+        allLines.sort((a,b)=>{
+          if(a.date!==b.date)return (b.date||'').localeCompare(a.date||'');
+          return (b.created||0)-(a.created||0);
+        });
+        const [filter,setFilterLocal]=[oversigtFilter,setOversigtFilter];
+        const filtered=allLines.filter(l=>{
+          if(filter==='linked')return !!l.linkedId;
+          if(filter==='unlinked')return !l.linkedId;
+          return true;
+        });
+        const totalAll=allLines.reduce((s,l)=>s+l.amount,0);
+        const totalLinked=allLines.filter(l=>l.linkedId).reduce((s,l)=>s+l.amount,0);
+        const totalUnlinked=totalAll-totalLinked;
+        const nReceipts=receipts.length;
+        const nManual=allLines.filter(l=>l.source==='manual-faktisk').length;
+
+        return(
+          <div style={{maxWidth:1300,margin:'0 auto',background:'white',borderRadius:'0 12px 12px 12px',boxShadow:'0 1px 3px rgba(0,0,0,0.06)',padding:isMobile?12:20}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:10,marginBottom:14}}>
+              <div>
+                <h2 style={{fontSize:17,fontWeight:700,color:'#0f172a'}}>Køb</h2>
+                <p style={{fontSize:12,color:'#64748b',marginTop:2}}>Kvitteringer og manuelle køb — og hvor de er koblet på budgettet.</p>
+              </div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                <label style={{padding:'7px 12px',borderRadius:7,border:'none',background:tweaks.accentColor,color:'white',cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'DM Sans',display:'inline-flex',alignItems:'center',gap:6}}>
+                  📷 {isMobile?'Tag':'Scan'}
+                  <input type="file" accept="image/*" capture="environment" style={{display:'none'}}
+                    onChange={e=>{addReceiptFromFile(e.target.files?.[0]);e.target.value='';}}/>
+                </label>
+                <label style={{padding:'7px 12px',borderRadius:7,border:'1px solid '+tweaks.accentColor,background:'white',color:tweaks.accentColor,cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'DM Sans',display:'inline-flex',alignItems:'center',gap:6}}>
+                  📁 Upload
+                  <input type="file" accept="image/*" style={{display:'none'}}
+                    onChange={e=>{addReceiptFromFile(e.target.files?.[0]);e.target.value='';}}/>
+                </label>
+                <button onClick={addManualReceipt}
+                  style={{padding:'7px 12px',borderRadius:7,border:'1px solid #e2e8f0',background:'white',color:'#475569',cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'inherit'}}>+ Manuelt</button>
+              </div>
+            </div>
+
+            {/* Summary strip */}
+            <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'repeat(3,1fr)',gap:isMobile?8:12,marginBottom:16}}>
+              <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:10,padding:isMobile?10:14}}>
+                <div style={{fontSize:10,fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em'}}>Total købt</div>
+                <div style={{fontSize:isMobile?16:20,fontWeight:700,color:'#0f172a',marginTop:4}}>{fmt(totalAll)} kr</div>
+                <div style={{fontSize:10,color:'#94a3b8',marginTop:3}}>{allLines.length} linje{allLines.length!==1?'r':''} · {nReceipts} kvittering{nReceipts!==1?'er':''}{nManual>0?' · '+nManual+' manuel':''}</div>
+              </div>
+              <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:10,padding:isMobile?10:14}}>
+                <div style={{fontSize:10,fontWeight:600,color:'#166534',textTransform:'uppercase',letterSpacing:'.05em'}}>Koblet til budget</div>
+                <div style={{fontSize:isMobile?16:20,fontWeight:700,color:'#166534',marginTop:4}}>{fmt(totalLinked)} kr</div>
+                <div style={{fontSize:10,color:'#16a34a',marginTop:3}}>{allLines.filter(l=>l.linkedId).length} linje{allLines.filter(l=>l.linkedId).length!==1?'r':''}</div>
+              </div>
+              <div style={{background:totalUnlinked>0?'#fffbeb':'#f8fafc',border:'1px solid '+(totalUnlinked>0?'#fde68a':'#e2e8f0'),borderRadius:10,padding:isMobile?10:14}}>
+                <div style={{fontSize:10,fontWeight:600,color:totalUnlinked>0?'#92400e':'#64748b',textTransform:'uppercase',letterSpacing:'.05em'}}>Ikke koblet</div>
+                <div style={{fontSize:isMobile?16:20,fontWeight:700,color:totalUnlinked>0?'#92400e':'#64748b',marginTop:4}}>{fmt(totalUnlinked)} kr</div>
+                <div style={{fontSize:10,color:totalUnlinked>0?'#b45309':'#94a3b8',marginTop:3}}>{allLines.filter(l=>!l.linkedId).length} linje{allLines.filter(l=>!l.linkedId).length!==1?'r':''}</div>
+              </div>
+            </div>
+
+            {/* View toggle + filter chips */}
+            <div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap',alignItems:'center'}}>
+              <div style={{display:'flex',gap:2,background:'#f1f5f9',padding:2,borderRadius:7}}>
+                {[['liste','📋 Liste'],['galleri','🖼 Galleri']].map(([k,l])=>(
+                  <button key={k} onClick={()=>setKobView(k)}
+                    style={{padding:'5px 12px',borderRadius:5,border:'none',background:kobView===k?'white':'transparent',color:kobView===k?'#0f172a':'#64748b',cursor:'pointer',fontSize:11,fontWeight:600,fontFamily:'inherit',boxShadow:kobView===k?'0 1px 2px rgba(0,0,0,0.08)':'none'}}>{l}</button>
+                ))}
+              </div>
+              {kobView==='liste'&&(
+                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                  {[['all','Alle'],['linked','Koblet'],['unlinked','Ikke koblet']].map(([k,l])=>(
+                    <button key={k} onClick={()=>setFilterLocal(k)}
+                      style={{padding:'5px 12px',borderRadius:6,border:'1px solid '+(filter===k?tweaks.accentColor:'#e2e8f0'),background:filter===k?tweaks.accentColor:'white',color:filter===k?'white':'#475569',cursor:'pointer',fontSize:11,fontWeight:600,fontFamily:'inherit'}}>{l}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Liste view — journal */}
+            {kobView==='liste'&&(allLines.length===0?(
+              <div style={{padding:'48px 20px',textAlign:'center',color:'#94a3b8',fontSize:13,border:'2px dashed #e2e8f0',borderRadius:10}}>
+                <div style={{fontSize:40,marginBottom:10,opacity:.5}}>🧾</div>
+                <p style={{marginBottom:4}}>Ingen køb endnu.</p>
+                <p style={{fontSize:11}}>Brug knapperne øverst: scan, upload eller opret et manuelt køb.</p>
+              </div>
+            ):(
+              <>
+                {/* Desktop header */}
+                {!isMobile&&(
+                  <div style={{display:'grid',gridTemplateColumns:'90px 140px 1fr 100px 1fr',gap:10,padding:'7px 10px',background:'#1e293b',color:'#cbd5e1',fontSize:10,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',borderRadius:'6px 6px 0 0'}}>
+                    <span>Dato</span><span>Butik</span><span>Beskrivelse</span><span style={{textAlign:'right'}}>Beløb</span><span>Koblet til</span>
+                  </div>
+                )}
+
+                {/* Rows */}
+                <div style={{display:'flex',flexDirection:'column',border:'1px solid #e2e8f0',borderRadius:isMobile?8:'0 0 6px 6px',borderTop:isMobile?'1px solid #e2e8f0':'none',overflow:'hidden'}}>
+                  {filtered.map((l,i)=>{
+                    const isManual=l.source==='manual-faktisk';
+                    const onRowClick=()=>{
+                      if(isManual){setSelectedId(l.itemId);setActiveTab('budget');}
+                      else setViewReceipt(l.receiptId);
+                    };
+                    const storeCell=isManual
+                      ?<span style={{color:'#0369a1',fontWeight:600,fontSize:11,background:'#e0f2fe',padding:'1px 6px',borderRadius:3,border:'1px solid #bae6fd',justifySelf:'start'}}>📝 Manuelt (faktisk)</span>
+                      :(l.store||<span style={{color:'#cbd5e1',fontStyle:'italic'}}>—</span>);
+                    const row=(
+                      <div key={l.key} onClick={onRowClick}
+                        style={isMobile?{
+                          padding:10,background:i%2?'#fafbfc':'white',borderBottom:i<filtered.length-1?'1px solid #f1f5f9':'none',cursor:'pointer',display:'flex',flexDirection:'column',gap:4
+                        }:{
+                          display:'grid',gridTemplateColumns:'90px 140px 1fr 100px 1fr',gap:10,padding:'8px 10px',alignItems:'center',background:i%2?'#fafbfc':'white',borderBottom:i<filtered.length-1?'1px solid #f1f5f9':'none',fontSize:12,cursor:'pointer',transition:'background .1s'
+                        }}
+                        onMouseEnter={e=>e.currentTarget.style.background='#eff6ff'}
+                        onMouseLeave={e=>e.currentTarget.style.background=i%2?'#fafbfc':'white'}>
+                        {isMobile?(
+                          <>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:8}}>
+                              <div style={{display:'flex',alignItems:'baseline',gap:8,minWidth:0}}>
+                                <span style={{fontFamily:'monospace',fontSize:10,color:'#94a3b8',flexShrink:0}}>{l.date||'—'}</span>
+                                {isManual
+                                  ?<span style={{color:'#0369a1',fontWeight:600,fontSize:10,background:'#e0f2fe',padding:'1px 6px',borderRadius:3,border:'1px solid #bae6fd'}}>📝 Manuelt</span>
+                                  :<span style={{fontSize:12,fontWeight:600,color:'#334155',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.store||<span style={{color:'#cbd5e1',fontStyle:'italic',fontWeight:400}}>Uden butik</span>}</span>
+                                }
+                              </div>
+                              <span style={{fontWeight:700,color:'#0f172a',whiteSpace:'nowrap'}}>{fmt(l.amount)} kr</span>
+                            </div>
+                            <div style={{fontSize:11,color:'#475569'}}>{l.desc||<span style={{color:'#cbd5e1',fontStyle:'italic'}}>Ingen beskrivelse</span>}</div>
+                            <div style={{fontSize:10}}>
+                              {l.linkedId?(
+                                <span style={{color:tweaks.accentColor,fontWeight:600}}>→ {l.linkedId} {l.linkedDesc}</span>
+                              ):(
+                                <span style={{color:'#b45309',fontWeight:600,background:'#fffbeb',padding:'1px 6px',borderRadius:3,border:'1px solid #fde68a'}}>⚠ Ikke koblet</span>
+                              )}
+                            </div>
+                          </>
+                        ):(
+                          <>
+                            <span style={{fontFamily:'monospace',fontSize:11,color:'#64748b'}}>{l.date||'—'}</span>
+                            <span style={{color:'#334155',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{storeCell}</span>
+                            <span style={{color:'#475569',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.desc||<span style={{color:'#cbd5e1',fontStyle:'italic'}}>—</span>}</span>
+                            <span style={{textAlign:'right',fontWeight:700,color:'#0f172a'}}>{fmt(l.amount)} kr</span>
+                            {l.linkedId?(
+                              <span style={{color:tweaks.accentColor,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={l.linkedId+' '+l.linkedDesc}>
+                                <span style={{fontFamily:'monospace',fontSize:10,color:'#94a3b8',marginRight:4}}>{l.linkedId}</span>{l.linkedDesc}
+                              </span>
+                            ):(
+                              <span style={{color:'#b45309',fontWeight:600,background:'#fffbeb',padding:'2px 8px',borderRadius:4,border:'1px solid #fde68a',fontSize:11,justifySelf:'start'}}>⚠ Ikke koblet</span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                    return row;
+                  })}
+                </div>
+
+                {/* Footer total for the filtered set */}
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 12px',marginTop:10,borderTop:'2px solid #1e293b'}}>
+                  <span style={{fontSize:12,color:'#64748b'}}>{filtered.length} linje{filtered.length!==1?'r':''} vist</span>
+                  <span style={{fontSize:15,fontWeight:700,color:'#0f172a'}}>Sum: {fmt(filtered.reduce((s,l)=>s+l.amount,0))} kr</span>
+                </div>
+              </>
+            ))}
+
+            {/* Galleri view — kvitterings-kort */}
+            {kobView==='galleri'&&(receipts.length===0?(
+              <div style={{padding:'48px 20px',textAlign:'center',color:'#94a3b8',fontSize:13,border:'2px dashed #e2e8f0',borderRadius:10}}>
+                <div style={{fontSize:40,marginBottom:10,opacity:.5}}>📸</div>
+                <p style={{marginBottom:4}}>Ingen kvitteringer.</p>
+                <p style={{fontSize:11}}>Scan eller upload din første kvittering med knapperne øverst.</p>
+              </div>
+            ):(
+              <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fill,minmax(220px,1fr))',gap:isMobile?8:12}}>
+                {receipts.map(r=>{
+                  const total=(r.lines||[]).reduce((s,l)=>s+(Number(l.amount)||0),0);
+                  const nLinked=(r.lines||[]).filter(l=>l.linkedId).length;
+                  const isBusy=analyzing===r.id;
+                  return(
+                    <div key={r.id} onClick={()=>setViewReceipt(r.id)} style={{border:'1px solid #e2e8f0',borderRadius:10,overflow:'hidden',cursor:'pointer',background:'white',transition:'box-shadow .15s',position:'relative'}}
+                      onMouseEnter={e=>e.currentTarget.style.boxShadow='0 4px 16px rgba(0,0,0,0.08)'}
+                      onMouseLeave={e=>e.currentTarget.style.boxShadow='none'}>
+                      <div style={{aspectRatio:'3/4',background:r.image?'#f8fafc':'#f1f5f9',backgroundImage:r.image?'url('+r.image+')':'none',backgroundSize:'cover',backgroundPosition:'center',display:r.image?'block':'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',color:'#94a3b8',fontSize:11}}>
+                        {!r.image&&<><div style={{fontSize:32,marginBottom:4,opacity:.5}}>📝</div><div style={{fontWeight:600}}>Manuelt køb</div></>}
+                      </div>
+                      {isBusy&&<div style={{position:'absolute',top:0,left:0,right:0,bottom:0,background:'rgba(15,23,42,0.6)',display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontSize:11,fontWeight:600}}>⏳ Analyserer…</div>}
+                      <div style={{padding:10}}>
+                        <div style={{fontSize:12,fontWeight:600,color:'#0f172a',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.store||<span style={{color:'#cbd5e1',fontWeight:400,fontStyle:'italic'}}>Uden butik</span>}</div>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginTop:3}}>
+                          <span style={{fontSize:10,color:'#94a3b8'}}>{r.date||''}</span>
+                          <span style={{fontSize:13,fontWeight:700,color:total?'#0f172a':'#cbd5e1'}}>{total?fmt(total)+' kr':'—'}</span>
+                        </div>
+                        <div style={{fontSize:10,color:'#64748b',marginTop:4}}>{(r.lines||[]).length} linje{(r.lines||[]).length!==1?'r':''}{nLinked>0&&<span style={{color:tweaks.accentColor}}> · {nLinked} koblet</span>}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
+      {/* ═══ BUDGET TAB ═══ */}
+      {activeTab==='budget'&&(
+        <div style={{maxWidth:1300,margin:'0 auto',background:'white',boxShadow:'0 1px 3px rgba(0,0,0,0.06)',paddingBottom:(selectedItem?.level>=2?50:0)+'px'}} ref={tableRef}>
+          {isMobile&&visibleData.map(item=><MobileRow key={item.id} item={item}/>)}
+          {!isMobile&&(()=>{
+            // Group visible rows by level-1 ancestor. Level-1 headers render OUTSIDE the group
+            // wrapper so they stay globally sticky and stack at the top as more come into view.
+            // Level-2+ rows render INSIDE the wrapper so they're scoped to their group (they
+            // scroll away with the group rather than overlapping the next project's rows).
+            const groups=[];let cur=null;let l1Idx=-1;
+            visibleData.forEach(it=>{
+              if(it.level===1){l1Idx++;cur={l1:it,l1Idx,rest:[]};groups.push(cur);}
+              else if(cur)cur.rest.push(it);
+            });
+            const renderRow=(item,gIdx)=>{
+            const {sum,actual,hasActual,diff}=getM(item.id);
+            const lc=levelColors[item.level]||levelColors[5];
+            const hasKids=item.children?.length>0;const isCol=collapsed.has(item.id);const isSel=selectedId===item.id;
+            const indent=(item.level-1)*18;const hasSC=!!item.subCalcRef;const canAddChild=item.level<MAX_LEVEL;
+            const showOwn=item.level>=2;
+            const isL2Stuck=item.level===2&&stuckL2.has(item.id);
+            const effKat=getEffectiveKategori(item);
+            const ownKat=item.kategori||'';
+            const inherited=!ownKat&&effKat;
+
+            return(
+              <div key={item.id} data-row-id={item.id} data-row-level={item.level} className="budget-row" onClick={()=>setSelectedId(item.id)}
+                style={{display:'grid',gridTemplateColumns:gridCols,padding:'5px 10px',alignItems:'center',gap:'0 12px',
+                  background:isSel?'#dbeafe':lc.bg,borderBottom:'1px solid #e8ecf0',
+                  fontSize:lc.fs,fontWeight:lc.fw,color:lc.color,cursor:'pointer',transition:'background .1s',minHeight:item.level<=2?38:32,
+                  ...(item.level===1?{position:'sticky',top:stickyHeaderH+gIdx*38,zIndex:92,background:isSel?'#dbeafe':'#1e293b',boxShadow:'0 1px 3px rgba(0,0,0,0.1)'}:{}),
+                  ...(item.level===2?(()=>{
+                    const idx=lvl2StickyMap.get(item.id)||0;
+                    return{position:'sticky',top:stickyHeaderH+(gIdx+1)*38+(idx*34),zIndex:91-idx,background:isSel?'#dbeafe':'#e8eef6',boxShadow:'0 1px 2px rgba(0,0,0,0.06)'};
+                  })():{})
+                }}
+                onMouseEnter={e=>{if(!isSel)e.currentTarget.style.background=item.level===1?lc.bg:'#f8fafc'}}
+                onMouseLeave={e=>{e.currentTarget.style.background=isSel?'#dbeafe':lc.bg}}>
+                <span style={{fontSize:10,color:'#94a3b8',fontFamily:'monospace'}}>{item.id}</span>
+                <div style={{display:'flex',alignItems:'center',paddingLeft:indent,gap:4,overflow:'hidden'}}>
+                  {hasKids&&!isL2Stuck?<button onClick={e=>{e.stopPropagation();toggleCollapse(item.id)}} style={{width:16,height:16,borderRadius:3,border:'none',background:'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:item.level===1?'#94a3b8':'#64748b',fontSize:9,transition:'transform .15s',transform:isCol?'rotate(-90deg)':'rotate(0)'}}>▼</button>
+                    :<span style={{width:16,flexShrink:0}}/>}
+                  <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}><EditableCell id={item.id} field="desc" value={item.desc}/></span>
+                  {item.link?<a href={item.link} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()} style={{color:tweaks.accentColor,fontSize:9,flexShrink:0}}>↗</a>:null}
+                  <button onClick={e=>{e.stopPropagation();setEditingLink(item.id)}} title="Tilføj/rediger link" style={{width:14,height:14,border:'none',background:'transparent',cursor:'pointer',fontSize:9,color:item.link?tweaks.accentColor:'#cbd5e1',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>🔗</button>
+                </div>
+                <div style={{textAlign:'right'}}>{showOwn&&item.level>=3&&<EditableCell id={item.id} field="antal" value={item.antal} numeric align="right"/>}</div>
+                <div style={{fontSize:10}}>{showOwn&&item.level>=3&&<SelectCell id={item.id} field="enhed" value={item.enhed} options={UNITS}/>}</div>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4,minWidth:0}}>
+                  {showOwn&&item.level>=3&&(hasSC
+                    ?<span style={{color:tweaks.accentColor,fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title="Fra underberegning">{fmt(item.pris)}</span>
+                    :<span style={{flex:1,minWidth:0,textAlign:'right'}}><EditableCell id={item.id} field="pris" value={item.pris} numeric align="right"/></span>)}
+                  {showOwn&&item.level>=3&&!item.children?.length&&<button onClick={e=>{e.stopPropagation();setSubcalcFor(item.id)}} title={hasSC?'Underberegning (klik for at ændre)':'Tilføj underberegning'}
+                    style={{width:16,height:16,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:hasSC?tweaks.accentColor:'#cbd5e1',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>⚙</button>}
+                </div>
+                <div style={{textAlign:'right',fontWeight:item.level<=2?700:item.level===3?600:400,fontSize:item.level===1?14:item.level===2?13:12,color:item.level===1?'#fff':sum<0?'#059669':lc.color}}>{fmt(sum)}</div>
+                <div style={{textAlign:'right',fontSize:item.level===1?13:11,fontWeight:item.level<=2?700:400,color:item.level===1?'#fff':'#475569'}}>
+                  {(item.level<=2||(item.level>=2&&!item.children?.length))?(
+                    item.children?.length?<span style={{color:item.level===1?'rgba(255,255,255,.85)':'#64748b'}}>{fmt(actual)}</span>:<EditableCell id={item.id} field="faktisk" value={item.faktisk} numeric align="right"/>
+                  ):(item.level>=3?<EditableCell id={item.id} field="faktisk" value={item.faktisk} numeric align="right"/>:null)}
+                </div>
+                <div style={{textAlign:'right',fontSize:item.level===1?12:10,fontWeight:600,color:item.level===1?(diff>0?'#fecaca':diff<0?'#bbf7d0':'rgba(255,255,255,.6)'):(diff>0?'#dc2626':diff<0?'#16a34a':'#cbd5e1')}}>
+                  {hasActual?(diff===0?'✓':(diff>0?'+':'')+fmt(Math.round(diff))):<span style={{color:item.level===1?'rgba(255,255,255,.3)':'#e2e8f0'}}>—</span>}
+                </div>
+                <div style={{fontSize:10}}>
+                  {showOwn&&<SelectCell id={item.id} field="kategori" value={ownKat} options={catOptions}/>}
+                  {showOwn&&inherited&&<span style={{fontSize:8,color:'#94a3b8',display:'block',marginTop:-2}}>↑ {effKat}</span>}
+                </div>
+                <div className="row-actions" style={{display:'flex',gap:1,justifyContent:'flex-end'}}>
+                  {canAddChild&&<button onClick={e=>{e.stopPropagation();addChild(item.id)}} title="Tilføj" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:14,color:'#94a3b8',display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>}
+                  <button onClick={e=>{e.stopPropagation();if(item.level===1){if(!confirm('Slet hele projektet "'+item.desc+'" inkl. alle underposter? Dette kan ikke fortrydes.'))return;}deleteItem(item.id)}} title="Slet" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:'#cbd5e1',display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+                </div>
+              </div>
+            );
+            };
+            return groups.map(g=>(
+              <React.Fragment key={'g-'+g.l1.id}>
+                {renderRow(g.l1,g.l1Idx)}
+                <div>{g.rest.map(it=>renderRow(it,g.l1Idx))}</div>
+              </React.Fragment>
+            ));
+          })()}
+          <div style={{padding:'10px 14px',borderTop:'1px solid #e8ecf0',display:'flex',justifyContent:'flex-start'}}>
+            <button onClick={addTopLevel}
+              style={{padding:'7px 12px',borderRadius:6,border:'1px dashed #cbd5e1',background:'white',cursor:'pointer',fontSize:12,fontWeight:600,color:'#475569',fontFamily:'DM Sans'}}>+ Nyt hovedprojekt</button>
+          </div>
+          <div className="desktop-only" style={{padding:'8px 14px',background:'#f8fafc',fontSize:10,color:'#94a3b8'}}>
+            Ctrl+V for at indsætte fra Excel. Hierarkiet genkendes automatisk.
+          </div>
+          <div style={{height:'80vh'}}/>
+        </div>
+      )}
+
+      {/* ═══ SUB-CALCULATIONS TAB ═══ */}
+      {activeTab==='subcalc'&&(
+        <div style={{maxWidth:1300,margin:'0 auto',background:'white',borderRadius:'0 12px 12px 12px',boxShadow:'0 1px 3px rgba(0,0,0,0.06)',padding:isMobile?12:20}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:8}}>
+            <div>
+              <h2 style={{fontSize:17,fontWeight:700,color:'#0f172a'}}>Underberegninger</h2>
+              <p style={{fontSize:12,color:'#64748b',marginTop:2}}>Vælg dem via budgetfanen.</p>
+            </div>
+            <button onClick={()=>{const nid='sc'+Date.now();setSubCalcs(p=>[...p,{id:nid,name:'Ny beregning',unit:'m²',items:[{id:nid+'-1',desc:'Post 1',antal:1,pris:0}]}])}}
+              style={{padding:'7px 14px',borderRadius:7,border:'none',background:tweaks.accentColor,color:'white',cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'DM Sans'}}>+ Ny</button>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:16}}>
+            {subCalcs.map((sc,scIdx)=>{
+              const scTotal=calcSCT(sc);const usedBy=data.filter(d=>d.subCalcRef===sc.id);
+              return(
+                <div key={sc.id} style={{border:'1px solid #e2e8f0',borderRadius:10,overflow:'hidden'}}>
+                  <div style={{background:'#f8fafc',padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+                    <div style={{display:'flex',alignItems:'center',gap:10}}>
+                      <input value={sc.name} onChange={e=>{const v=e.target.value;setSubCalcs(p=>p.map((s,i)=>i===scIdx?{...s,name:v}:s))}} style={{border:'none',background:'transparent',fontSize:14,fontWeight:700,color:'#0f172a',fontFamily:'inherit',outline:'none',width:isMobile?160:260}}/>
+                      <select value={sc.unit} onChange={e=>{const v=e.target.value;setSubCalcs(p=>p.map((s,i)=>i===scIdx?{...s,unit:v}:s))}} style={{border:'1px solid #e2e8f0',borderRadius:5,padding:'3px 6px',fontSize:11,fontFamily:'inherit'}}>{UNITS.filter(Boolean).map(u=><option key={u}>{u}</option>)}</select>
+                    </div>
+                    <div style={{display:'flex',alignItems:'center',gap:10}}>
+                      <span style={{fontSize:15,fontWeight:700,color:'#0f172a'}}>{fmt(Math.round(scTotal))} kr/{sc.unit}</span>
+                      <button onClick={()=>setSubCalcs(p=>p.filter((_,i)=>i!==scIdx))} style={{border:'none',background:'transparent',cursor:'pointer',fontSize:13,color:'#cbd5e1'}}>✕</button>
+                    </div>
+                  </div>
+                  <div style={{padding:'6px 14px'}}>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 90px 100px 100px 30px',gap:4,padding:'4px 0',fontSize:10,fontWeight:600,color:'#94a3b8',textTransform:'uppercase'}}>
+                      <span>Post</span><span style={{textAlign:'right'}}>Antal</span><span style={{textAlign:'right'}}>Pris</span><span style={{textAlign:'right'}}>Sum</span><span/>
+                    </div>
+                    {sc.items.map((it,itIdx)=>(
+                      <div key={it.id} style={{display:'grid',gridTemplateColumns:'1fr 90px 100px 100px 30px',gap:4,padding:'3px 0',alignItems:'center',borderTop:'1px solid #f1f5f9',fontSize:12}}>
+                        <input value={it.desc} onChange={e=>{const v=e.target.value;setSubCalcs(p=>p.map((s,i)=>i===scIdx?{...s,items:s.items.map((t,j)=>j===itIdx?{...t,desc:v}:t)}:s))}} style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',outline:'none',color:'#334155'}}/>
+                        <input value={it.antal} type="number" step="any" onChange={e=>{const v=parseFloat(e.target.value)||0;setSubCalcs(p=>p.map((s,i)=>i===scIdx?{...s,items:s.items.map((t,j)=>j===itIdx?{...t,antal:v}:t)}:s))}} style={{border:'1px solid #e2e8f0',borderRadius:3,padding:'2px 4px',fontSize:12,fontFamily:'inherit',textAlign:'right',outline:'none',width:'100%'}}/>
+                        <input value={it.pris} type="number" step="any" onChange={e=>{const v=parseFloat(e.target.value)||0;setSubCalcs(p=>p.map((s,i)=>i===scIdx?{...s,items:s.items.map((t,j)=>j===itIdx?{...t,pris:v}:t)}:s))}} style={{border:'1px solid #e2e8f0',borderRadius:3,padding:'2px 4px',fontSize:12,fontFamily:'inherit',textAlign:'right',outline:'none',width:'100%'}}/>
+                        <span style={{textAlign:'right',color:'#475569'}}>{fmt(Math.round(it.antal*it.pris))}</span>
+                        <button onClick={()=>setSubCalcs(p=>p.map((s,i)=>i===scIdx?{...s,items:s.items.filter((_,j)=>j!==itIdx)}:s))} style={{border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:'#cbd5e1'}}>✕</button>
+                      </div>
+                    ))}
+                    <button onClick={()=>{const nid=sc.id+'-'+(sc.items.length+1);setSubCalcs(p=>p.map((s,i)=>i===scIdx?{...s,items:[...s.items,{id:nid,desc:'Ny post',antal:1,pris:0}]}:s))}}
+                      style={{marginTop:4,padding:'3px 8px',borderRadius:5,border:'1px dashed #e2e8f0',background:'transparent',cursor:'pointer',fontSize:11,color:'#94a3b8',fontFamily:'DM Sans'}}>+ Tilføj</button>
+                  </div>
+                  {usedBy.length>0&&<div style={{padding:'6px 14px',background:'#f0f9ff',fontSize:11,color:'#2563eb',borderTop:'1px solid #e2e8f0'}}>Bruges af: {usedBy.map(d=>d.desc+' ('+d.id+')').join(', ')}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ CATEGORY TAB ═══ */}
+      {activeTab==='kategorier'&&(
+        <div style={{maxWidth:1300,margin:'0 auto',background:'white',borderRadius:'0 12px 12px 12px',boxShadow:'0 1px 3px rgba(0,0,0,0.06)',padding:isMobile?12:20}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',flexWrap:'wrap',gap:8,marginBottom:editFaserOpen?8:14}}>
+            <h2 style={{fontSize:17,fontWeight:700,color:'#0f172a'}}>Faser</h2>
+            <button onClick={()=>setEditFaserOpen(v=>!v)}
+              style={{padding:'5px 10px',borderRadius:6,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:11,fontWeight:600,color:'#475569',fontFamily:'DM Sans'}}>{editFaserOpen?'✓ Færdig':'⚙ Rediger faser'}</button>
+          </div>
+
+          {editFaserOpen&&(
+            <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8,padding:10,marginBottom:14,display:'flex',flexDirection:'column',gap:4}}>
+              {categories.length===0
+                ?<div style={{fontSize:11,color:'#94a3b8',fontStyle:'italic',padding:'4px 2px'}}>Ingen faser endnu.</div>
+                :categories.map((cat,idx)=>{
+                  const count=data.filter(d=>d.kategori===cat).length;
+                  return(
+                    <div key={cat+'-'+idx} style={{display:'flex',alignItems:'center',gap:6,padding:'3px 6px',background:'white',border:'1px solid #e2e8f0',borderRadius:5}}>
+                      <input defaultValue={cat}
+                        onBlur={e=>renameCategory(cat,e.target.value)}
+                        onKeyDown={e=>{if(e.key==='Enter')e.target.blur();if(e.key==='Escape'){e.target.value=cat;e.target.blur();}}}
+                        style={{flex:1,minWidth:0,border:'none',background:'transparent',fontSize:12,fontWeight:500,color:'#334155',fontFamily:'inherit',outline:'none',padding:'2px 2px'}}/>
+                      <span style={{fontSize:10,color:'#94a3b8',whiteSpace:'nowrap'}}>{count}</span>
+                      <button onClick={()=>deleteCategory(cat)} title="Slet fase"
+                        style={{width:18,height:18,borderRadius:3,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:'#cbd5e1',display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>✕</button>
+                    </div>
+                  );
+                })}
+              <button onClick={addCategory}
+                style={{marginTop:2,padding:'4px 8px',border:'1px dashed #cbd5e1',background:'transparent',color:'#94a3b8',borderRadius:5,cursor:'pointer',fontSize:11,fontFamily:'DM Sans',alignSelf:'flex-start'}}>+ Ny fase</button>
+            </div>
+          )}
+          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+            {catDetails.map(({cat,sum,actual,diff,hasActual,rows})=>{
+              const pct=totalSum>0?(sum/totalSum)*100:0;const isExp=expandedCats.has(cat);
+              return(
+                <div key={cat}>
+                  <div onClick={()=>setExpandedCats(p=>{const n=new Set(p);n.has(cat)?n.delete(cat):n.add(cat);return n})}
+                    style={{display:'flex',alignItems:'center',gap:isMobile?6:10,padding:'8px 14px',background:'#f8fafc',borderRadius:8,cursor:'pointer',userSelect:'none'}}>
+                    <span style={{fontSize:10,color:'#64748b',transition:'transform .15s',transform:isExp?'rotate(90deg)':'rotate(0)'}}>▶</span>
+                    <span style={{width:isMobile?80:110,fontSize:12,fontWeight:600,color:'#334155',flexShrink:0}}>{cat}</span>
+                    {!isMobile&&<div style={{flex:1,height:24,background:'#e2e8f0',borderRadius:5,overflow:'hidden'}}>
+                      <div style={{height:'100%',width:Math.max(pct,0.5)+'%',background:tweaks.accentColor,borderRadius:5,transition:'width .3s',display:'flex',alignItems:'center',paddingLeft:6}}>
+                        {pct>8&&<span style={{fontSize:10,color:'white',fontWeight:600}}>{pct.toFixed(1)}%</span>}
+                      </div>
+                    </div>}
+                    <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',marginLeft:'auto',gap:2}}>
+                      <span style={{fontSize:13,fontWeight:700,color:'#0f172a',whiteSpace:'nowrap'}}>{fmt(sum)} kr</span>
+                      {hasActual&&(
+                        <div style={{display:'flex',gap:8,fontSize:10,whiteSpace:'nowrap'}}>
+                          <span style={{color:'#64748b'}}>Faktisk: <strong style={{color:'#334155'}}>{fmt(actual)}</strong></span>
+                          <span style={{fontWeight:700,color:diff>0?'#dc2626':diff<0?'#16a34a':'#64748b'}}>{diff===0?'✓':(diff>0?'+':'')+fmt(Math.round(diff))+' kr'}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {isExp&&(
+                    <div style={{marginLeft:isMobile?8:20,marginTop:4,marginBottom:6,borderLeft:'2px solid #e2e8f0'}}>
+                      {rows.filter(r=>r.level<=detailLevel).map(r=>{
+                        const lc=levelColors[r.level]||levelColors[5];
+                        const isLeaf=r.isLeafInCat;
+                        const indent=(r.level-1)*14;
+                        const rDiff=r.catAct-r.catSumTracked;
+                        return(
+                          <div key={r.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:r.level<=2?'5px 10px':'3px 10px',paddingLeft:10+indent,fontSize:r.level===1?12:r.level===2?12:11,background:r.level===1?'#1e293b':r.level===2?'#e8eef6':r.level===3?'#f1f5f9':'transparent',color:r.level===1?'#fff':r.level===2?'#1e293b':'#475569',fontWeight:r.level<=2?700:r.level===3?600:isLeaf?500:400,borderBottom:r.level>=3?'1px solid #f1f5f9':'none',marginTop:r.level<=2?2:0}}>
+                            <span style={{display:'flex',alignItems:'center',gap:6,overflow:'hidden',flex:1,minWidth:0}}>
+                              <span style={{fontFamily:'monospace',fontSize:9,color:r.level===1?'#94a3b8':'#94a3b8',flexShrink:0}}>{r.id}</span>
+                              <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.desc}</span>
+                            </span>
+                            <span style={{display:'flex',alignItems:'baseline',gap:10,whiteSpace:'nowrap',marginLeft:10}}>
+                              {r.catHasAct&&(
+                                <>
+                                  <span style={{fontSize:10,color:r.level===1?'rgba(255,255,255,.75)':'#64748b',fontWeight:500}}>Faktisk: <strong style={{color:r.level===1?'#fff':'#334155'}}>{fmt(r.catAct)}</strong></span>
+                                  <span style={{fontSize:10,fontWeight:700,color:r.level===1?(rDiff>0?'#fecaca':rDiff<0?'#bbf7d0':'rgba(255,255,255,.7)'):(rDiff>0?'#dc2626':rDiff<0?'#16a34a':'#64748b')}}>{rDiff===0?'✓':(rDiff>0?'+':'')+fmt(Math.round(rDiff))}</span>
+                                </>
+                              )}
+                              <span style={{fontWeight:700,color:r.level===1?'#fff':r.catSum<0?'#059669':r.level<=2?'#0f172a':'#334155'}}>{fmt(r.catSum)} kr</span>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <div style={{display:'flex',justifyContent:'flex-end',padding:'10px 14px',borderTop:'2px solid #1e293b',marginTop:6}}>
+              <span style={{fontSize:15,fontWeight:700,color:'#0f172a'}}>Total: {fmt(totalSum)} kr</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* (Kvitteringer-fanen blev flettet ind i Køb-fanen — se galleri-view der) */}
+
+      {/* Receipt viewer/editor modal */}
+      {viewReceipt&&(()=>{
+        const r=receipts.find(x=>x.id===viewReceipt);
+        if(!r)return null;
+        const buildPath=(d)=>{const p=[];let cur=d;while(cur.parent){cur=dataMap.get(cur.parent);if(!cur)break;p.unshift(cur.desc);}return p.join(' › ');};
+        const leafOptions=[{value:'',label:'Ingen kobling',path:''},...data.filter(d=>d.level>=1).map(d=>({value:d.id,label:d.desc,path:buildPath(d),level:d.level}))];
+        const updateR=(field,val)=>{setReceipts(p=>p.map(x=>x.id===r.id?{...x,[field]:val}:x));saveReceiptDebounced(r.id);};
+        const updateLine=(lineId,field,val)=>{setReceipts(p=>p.map(x=>x.id!==r.id?x:{...x,lines:x.lines.map(l=>l.id===lineId?{...l,[field]:val}:l)}));saveReceiptDebounced(r.id);};
+        const addLine=()=>{setReceipts(p=>p.map(x=>x.id!==r.id?x:{...x,lines:[...(x.lines||[]),{id:'l'+Date.now(),desc:'',amount:'',linkedId:''}]}));saveReceiptDebounced(r.id);};
+        const removeLine=lid=>{setReceipts(p=>p.map(x=>x.id!==r.id?x:{...x,lines:x.lines.filter(l=>l.id!==lid)}));saveReceiptDebounced(r.id);};
+        const total=(r.lines||[]).reduce((s,l)=>s+(Number(l.amount)||0),0);
+        const isBusy=analyzing===r.id;
+        return(
+          <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.7)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',padding:isMobile?6:20}}
+            onClick={()=>setViewReceipt(null)}>
+            <div style={{background:'white',borderRadius:12,width:900,maxWidth:'100%',maxHeight:'96vh',display:'flex',flexDirection:isMobile?'column':'row',overflow:'hidden'}} onClick={e=>e.stopPropagation()}>
+              <div style={{flex:isMobile?'0 0 35vh':'0 0 340px',background:'#0f172a',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',position:'relative'}}>
+                {r.image
+                  ?<img src={r.image} style={{maxWidth:'100%',maxHeight:isMobile?'35vh':'96vh',objectFit:'contain'}} alt="Kvittering"/>
+                  :<div style={{color:'#94a3b8',textAlign:'center',padding:20,fontSize:12}}>
+                    <div style={{fontSize:48,marginBottom:8,opacity:.5}}>📝</div>
+                    <div style={{fontWeight:600,color:'#cbd5e1',marginBottom:4}}>Manuelt køb</div>
+                    <div>Ingen kvittering uploadet</div>
+                  </div>
+                }
+                {isBusy&&<div style={{position:'absolute',top:0,left:0,right:0,bottom:0,background:'rgba(15,23,42,0.7)',display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontSize:14,fontWeight:600}}>⏳ Analyserer kvittering…</div>}
+              </div>
+              <div style={{flex:1,padding:16,display:'flex',flexDirection:'column',gap:10,overflowY:'auto',minWidth:0}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:8}}>
+                  <h3 style={{fontSize:15,fontWeight:700,color:'#0f172a'}}>Kvittering</h3>
+                  <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                    {r.image&&<button onClick={()=>analyzeReceipt(r.id)} disabled={isBusy}
+                      style={{padding:'5px 10px',border:'1px solid '+tweaks.accentColor,background:isBusy?'#f1f5f9':'white',color:tweaks.accentColor,borderRadius:5,cursor:isBusy?'wait':'pointer',fontSize:11,fontWeight:600,fontFamily:'inherit'}}>✨ {isBusy?'Analyserer…':'Analyser'}</button>}
+                    <button onClick={()=>setViewReceipt(null)} style={{border:'none',background:'transparent',cursor:'pointer',fontSize:18,color:'#94a3b8'}}>✕</button>
+                  </div>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:8}}>
+                  <label style={{display:'flex',flexDirection:'column',gap:3,fontSize:11}}>
+                    <span style={{color:'#64748b',fontSize:9,fontWeight:600,textTransform:'uppercase'}}>Butik</span>
+                    <input value={r.store||''} onChange={e=>updateR('store',e.target.value)} placeholder="fx Silvan"
+                      style={{padding:'6px 8px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
+                  </label>
+                  <label style={{display:'flex',flexDirection:'column',gap:3,fontSize:11}}>
+                    <span style={{color:'#64748b',fontSize:9,fontWeight:600,textTransform:'uppercase'}}>Dato</span>
+                    <input type="date" value={r.date||''} onChange={e=>updateR('date',e.target.value)}
+                      style={{padding:'6px 8px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
+                  </label>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:4}}>
+                  <span style={{color:'#64748b',fontSize:9,fontWeight:600,textTransform:'uppercase'}}>Linjer</span>
+                  <span style={{fontSize:11,color:'#64748b'}}>Total: <strong style={{color:'#0f172a'}}>{fmt(total)} kr</strong></span>
+                </div>
+                <div style={{fontSize:10,color:'#64748b',background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:5,padding:'6px 8px'}}>
+                  💡 Linjer der er koblet til en budget-post bidrager automatisk til „Faktisk“.
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                  {(r.lines||[]).map((l,i)=>(
+                    <div key={l.id} style={{border:'1px solid #e2e8f0',borderRadius:6,padding:8,background:'#fafbfc',display:'flex',flexDirection:'column',gap:6}}>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 100px 24px',gap:6,alignItems:'center'}}>
+                        <input value={l.desc} onChange={e=>updateLine(l.id,'desc',e.target.value)} placeholder="Beskrivelse"
+                          style={{padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
+                        <input type="number" inputMode="decimal" value={l.amount} onChange={e=>updateLine(l.id,'amount',e.target.value)} placeholder="kr"
+                          style={{padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12,fontFamily:'inherit',outline:'none',textAlign:'right'}}/>
+                        <button onClick={()=>removeLine(l.id)} title="Fjern linje"
+                          style={{border:'none',background:'transparent',cursor:'pointer',fontSize:14,color:'#cbd5e1'}}>✕</button>
+                      </div>
+                      <SearchableLeafSelect value={l.linkedId} onChange={v=>updateLine(l.id,'linkedId',v)} options={leafOptions} accent={tweaks.accentColor}/>
+                    </div>
+                  ))}
+                  <button onClick={addLine}
+                    style={{padding:'6px',border:'1px dashed #cbd5e1',background:'white',color:'#64748b',borderRadius:5,cursor:'pointer',fontSize:11,fontFamily:'inherit'}}>+ Tilføj linje</button>
+                </div>
+                <label style={{display:'flex',flexDirection:'column',gap:3,fontSize:11,marginTop:6}}>
+                  <span style={{color:'#64748b',fontSize:9,fontWeight:600,textTransform:'uppercase'}}>Note</span>
+                  <textarea value={r.note||''} onChange={e=>updateR('note',e.target.value)} rows={2}
+                    style={{padding:'6px 8px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none',resize:'vertical'}}/>
+                </label>
+                <div style={{marginTop:'auto',display:'flex',justifyContent:'space-between',gap:8,paddingTop:10,borderTop:'1px solid #f1f5f9'}}>
+                  <button onClick={()=>{if(confirm('Slet denne kvittering?')){deleteReceipt(r.id);setViewReceipt(null);}}}
+                    style={{padding:'7px 12px',border:'1px solid #fecaca',background:'white',color:'#dc2626',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'inherit'}}>🗑 Slet</button>
+                  <button onClick={()=>setViewReceipt(null)}
+                    style={{padding:'7px 14px',border:'none',background:tweaks.accentColor,color:'white',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'inherit'}}>Færdig</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {subcalcFor&&dataMap.get(subcalcFor)&&(()=>{
+        const item=dataMap.get(subcalcFor);
+        return(
+          <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.3)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={()=>setSubcalcFor(null)}>
+            <div style={{background:'white',borderRadius:12,padding:20,width:460,maxWidth:'100%',boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}} onClick={e=>e.stopPropagation()}>
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:9,fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:3}}>Underberegning for</div>
+                <div style={{fontSize:14,fontWeight:700,color:'#0f172a',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                  <span style={{fontFamily:'monospace',fontSize:11,color:'#94a3b8',marginRight:6,fontWeight:400}}>{item.id}</span>{item.desc}
+                </div>
+              </div>
+              <select value={item.subCalcRef||''} onChange={e=>updateItem(item.id,'subCalcRef',e.target.value||undefined)} autoFocus
+                style={{width:'100%',padding:'9px 11px',border:'1px solid #cbd5e1',borderRadius:7,fontSize:13,fontFamily:'inherit',background:'white',marginBottom:12,cursor:'pointer',fontWeight:item.subCalcRef?600:400,color:item.subCalcRef?tweaks.accentColor:'#475569'}}>
+                {scOptions.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+                {item.subCalcRef&&<button onClick={()=>{setSubcalcFor(null);setActiveTab('subcalc')}} style={{padding:'7px 12px',border:'1px solid '+tweaks.accentColor,background:'white',color:tweaks.accentColor,borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'inherit'}}>Rediger underberegning →</button>}
+                <button onClick={()=>setSubcalcFor(null)} style={{padding:'7px 14px',border:'none',background:tweaks.accentColor,color:'white',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'inherit'}}>Færdig</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      {editingLink&&dataMap.get(editingLink)&&<LinkEditor item={dataMap.get(editingLink)}/>}
+      {toast&&<div className="toast">{toast}</div>}
+      {tweaksVisible&&(
+        <div style={{position:'fixed',bottom:20,right:20,background:'white',borderRadius:12,boxShadow:'0 8px 32px rgba(0,0,0,0.16)',padding:16,width:220,zIndex:1000}}>
+          <h3 style={{fontSize:13,fontWeight:700,marginBottom:10,color:'#0f172a'}}>Tweaks</h3>
+          <label style={{fontSize:11,color:'#64748b',display:'flex',alignItems:'center',gap:8}}>Accent farve
+            <input type="color" value={tweaks.accentColor} onChange={e=>{const v=e.target.value;setTweaks(p=>({...p,accentColor:v}));try{window.parent.postMessage({type:'__edit_mode_set_keys',edits:{accentColor:v}},'*')}catch(_){}}} style={{width:28,height:20,border:'none',cursor:'pointer'}}/>
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

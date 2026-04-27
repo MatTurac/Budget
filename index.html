@@ -1221,12 +1221,37 @@ function BudgetApp({session}){
         </div>
         {activeTab==='budget'&&(
           <div style={{maxWidth:1300,margin:'0 auto'}}>
-            <div style={{padding:'4px 10px 6px',display:'flex',alignItems:'center',gap:8}}>
+            <div style={{padding:'4px 10px 6px',display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
               <span style={{fontSize:11,color:'#64748b'}}>🔍</span>
               <input value={budgetSearch} onChange={e=>setBudgetSearch(e.target.value)} placeholder="Søg i beskrivelser…"
                 style={{flex:1,maxWidth:360,padding:'5px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:12,fontFamily:'inherit',outline:'none',background:'white'}}/>
               {budgetSearch&&<button onClick={()=>setBudgetSearch('')} style={{padding:'4px 8px',border:'none',background:'transparent',color:'#64748b',cursor:'pointer',fontSize:11,fontFamily:'inherit'}}>✕ Ryd</button>}
-              {searchMatches&&<span style={{fontSize:10,color:'#94a3b8'}}>{[...searchMatches].filter(id=>{const it=dataMap.get(id);return it&&(it.desc||'').toLowerCase().includes(budgetSearch.trim().toLowerCase());}).length} match</span>}
+              {searchMatches&&(()=>{
+                const q=budgetSearch.trim().toLowerCase();
+                const direct=[...searchMatches].filter(id=>{const it=dataMap.get(id);return it&&(it.desc||'').toLowerCase().includes(q);});
+                // Avoid double-counting nested matches: only sum top-most matches
+                const directSet=new Set(direct);
+                const roots=direct.filter(id=>{
+                  let cur=dataMap.get(id);
+                  while(cur?.parent){
+                    cur=dataMap.get(cur.parent);
+                    if(!cur)break;
+                    if(directSet.has(cur.id))return false;
+                  }
+                  return true;
+                });
+                let s=0,a=0;
+                roots.forEach(id=>{const m=metricsById.get(id);if(m){s+=m.sum;a+=m.actual;}});
+                const hasA=roots.some(id=>metricsById.get(id)?.hasActual);
+                return(
+                  <span style={{marginLeft:'auto',padding:'5px 12px',background:'#dbeafe',borderRadius:6,fontSize:12,color:'#0f172a',whiteSpace:'nowrap'}}>
+                    <span style={{color:'#64748b',fontSize:11,marginRight:6}}>Filtreret sum:</span>
+                    <strong>{fmt(s)} kr</strong>
+                    {hasA&&<span style={{marginLeft:8,color:'#475569',fontSize:11}}>· faktisk {fmt(a)} kr</span>}
+                    <span style={{color:'#94a3b8',marginLeft:6,fontSize:10}}>· {direct.length} match</span>
+                  </span>
+                );
+              })()}
             </div>
             {!isMobile&&<div style={{display:'grid',gridTemplateColumns:gridCols,padding:'7px 10px',background:'#1e293b',color:'#cbd5e1',fontSize:10,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',gap:'0 12px'}}>
               <span>Kode</span><span>Beskrivelse</span><span style={{textAlign:'right'}}>Antal</span><span>Enhed</span><span style={{textAlign:'right'}}>Enhedspris</span><span style={{textAlign:'right'}}>Budget</span><span style={{textAlign:'right'}}>Faktisk</span><span style={{textAlign:'right'}}>Afvigelse</span><span>Kategori</span><span/>

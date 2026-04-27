@@ -385,6 +385,8 @@ function BudgetApp({session}){
   const [editFaserOpen,setEditFaserOpen]=useState(false);
   const [dragId,setDragId]=useState(null);
   const [dragOver,setDragOver]=useState({id:null,side:null});
+  const [budgetSearch,setBudgetSearch]=useState('');
+  const [kobStoreFilter,setKobStoreFilter]=useState('');
   const [toast,setToast]=useState(null);
   const [tweaks,setTweaks]=useState(TWEAK_DEFAULTS);
   const [tweaksVisible,setTweaksVisible]=useState(false);
@@ -663,7 +665,24 @@ function BudgetApp({session}){
   },[activeTab,dataMap,collapsed]);
 
   const toggleCollapse=id=>setCollapsed(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});
+
+  // When search is active: show items whose desc matches + all their ancestors (for context).
+  const searchMatches=useMemo(()=>{
+    const q=budgetSearch.trim().toLowerCase();
+    if(!q)return null;
+    const ids=new Set();
+    data.forEach(d=>{
+      if((d.desc||'').toLowerCase().includes(q)){
+        ids.add(d.id);
+        let cur=d;
+        while(cur.parent){cur=dataMap.get(cur.parent);if(!cur)break;ids.add(cur.id);}
+      }
+    });
+    return ids;
+  },[budgetSearch,data,dataMap]);
+
   const isVisible=item=>{
+    if(searchMatches)return searchMatches.has(item.id);
     if(item.level>detailLevel)return false;
     let cur=item;while(cur.parent){if(collapsed.has(cur.parent))return false;cur=dataMap.get(cur.parent);if(!cur)break;}return true;
   };
@@ -1140,11 +1159,18 @@ function BudgetApp({session}){
             <button key={k} className="tab-btn" onClick={()=>setActiveTab(k)} style={{background:activeTab===k?'white':'#e2e8f0',color:activeTab===k?'#0f172a':'#64748b',fontSize:isMobile?11:12}}>{l}</button>
           ))}
         </div>
-        {activeTab==='budget'&&!isMobile&&(
+        {activeTab==='budget'&&(
           <div style={{maxWidth:1300,margin:'0 auto'}}>
-            <div style={{display:'grid',gridTemplateColumns:gridCols,padding:'7px 10px',background:'#1e293b',color:'#cbd5e1',fontSize:10,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',gap:'0 12px'}}>
-              <span>Kode</span><span>Beskrivelse</span><span style={{textAlign:'right'}}>Antal</span><span>Enhed</span><span style={{textAlign:'right'}}>Enhedspris</span><span style={{textAlign:'right'}}>Budget</span><span style={{textAlign:'right'}}>Faktisk</span><span style={{textAlign:'right'}}>Afvigelse</span><span>Kategori</span><span/>
+            <div style={{padding:'4px 10px 6px',display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:11,color:'#64748b'}}>🔍</span>
+              <input value={budgetSearch} onChange={e=>setBudgetSearch(e.target.value)} placeholder="Søg i beskrivelser…"
+                style={{flex:1,maxWidth:360,padding:'5px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:12,fontFamily:'inherit',outline:'none',background:'white'}}/>
+              {budgetSearch&&<button onClick={()=>setBudgetSearch('')} style={{padding:'4px 8px',border:'none',background:'transparent',color:'#64748b',cursor:'pointer',fontSize:11,fontFamily:'inherit'}}>✕ Ryd</button>}
+              {searchMatches&&<span style={{fontSize:10,color:'#94a3b8'}}>{[...searchMatches].filter(id=>{const it=dataMap.get(id);return it&&(it.desc||'').toLowerCase().includes(budgetSearch.trim().toLowerCase());}).length} match</span>}
             </div>
+            {!isMobile&&<div style={{display:'grid',gridTemplateColumns:gridCols,padding:'7px 10px',background:'#1e293b',color:'#cbd5e1',fontSize:10,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',gap:'0 12px'}}>
+              <span>Kode</span><span>Beskrivelse</span><span style={{textAlign:'right'}}>Antal</span><span>Enhed</span><span style={{textAlign:'right'}}>Enhedspris</span><span style={{textAlign:'right'}}>Budget</span><span style={{textAlign:'right'}}>Faktisk</span><span style={{textAlign:'right'}}>Afvigelse</span><span>Kategori</span><span/>
+            </div>}
           </div>
         )}
       </div>
@@ -1154,7 +1180,9 @@ function BudgetApp({session}){
         // Flatten every receipt line, plus manual `faktisk` entries from the budget tree,
         // into a single journal array.
         const allLines=[];
+        const storeFilter=kobStoreFilter||'';
         receipts.forEach(r=>{
+          if(storeFilter&&(r.store||'').trim()!==storeFilter)return;
           (r.lines||[]).forEach(l=>{
             const linked=l.linkedId?dataMap.get(l.linkedId):null;
             allLines.push({
@@ -1171,24 +1199,27 @@ function BudgetApp({session}){
             });
           });
         });
-        data.forEach(d=>{
-          if(d.children?.length)return;
-          if(d.faktisk==null||d.faktisk==='')return;
-          const amount=Number(d.faktisk)||0;
-          if(!amount)return;
-          allLines.push({
-            key:'f-'+d.id,
-            source:'manual-faktisk',
-            itemId:d.id,
-            store:'',
-            date:'',
-            desc:d.desc||'',
-            amount,
-            linkedId:d.id,
-            linkedDesc:d.desc||'',
-            created:0,
+        // Manual-faktisk entries have no store, so they're hidden when a store filter is active.
+        if(!storeFilter){
+          data.forEach(d=>{
+            if(d.children?.length)return;
+            if(d.faktisk==null||d.faktisk==='')return;
+            const amount=Number(d.faktisk)||0;
+            if(!amount)return;
+            allLines.push({
+              key:'f-'+d.id,
+              source:'manual-faktisk',
+              itemId:d.id,
+              store:'',
+              date:'',
+              desc:d.desc||'',
+              amount,
+              linkedId:d.id,
+              linkedDesc:d.desc||'',
+              created:0,
+            });
           });
-        });
+        }
         allLines.sort((a,b)=>{
           if(a.date!==b.date)return (b.date||'').localeCompare(a.date||'');
           return (b.created||0)-(a.created||0);
@@ -1256,13 +1287,24 @@ function BudgetApp({session}){
                 ))}
               </div>
               {kobView==='liste'&&(
-                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
                   {[['all','Alle'],['linked','Koblet'],['unlinked','Ikke koblet']].map(([k,l])=>(
                     <button key={k} onClick={()=>setFilterLocal(k)}
                       style={{padding:'5px 12px',borderRadius:6,border:'1px solid '+(filter===k?tweaks.accentColor:'#e2e8f0'),background:filter===k?tweaks.accentColor:'white',color:filter===k?'white':'#475569',cursor:'pointer',fontSize:11,fontWeight:600,fontFamily:'inherit'}}>{l}</button>
                   ))}
                 </div>
               )}
+              {(()=>{
+                const stores=[...new Set(receipts.map(r=>(r.store||'').trim()).filter(Boolean))].sort();
+                if(stores.length===0)return null;
+                return(
+                  <select value={kobStoreFilter} onChange={e=>setKobStoreFilter(e.target.value)}
+                    style={{padding:'5px 9px',border:'1px solid '+(kobStoreFilter?tweaks.accentColor:'#e2e8f0'),borderRadius:6,fontSize:11,fontFamily:'inherit',background:'white',cursor:'pointer',color:kobStoreFilter?tweaks.accentColor:'#475569',fontWeight:kobStoreFilter?600:400}}>
+                    <option value="">🏪 Alle butikker</option>
+                    {stores.map(s=><option key={s} value={s}>{s}</option>)}
+                  </select>
+                );
+              })()}
             </div>
 
             {/* Liste view — journal */}
@@ -1376,15 +1418,20 @@ function BudgetApp({session}){
             ))}
 
             {/* Galleri view — kvitterings-kort */}
-            {kobView==='galleri'&&(receipts.length===0?(
-              <div style={{padding:'48px 20px',textAlign:'center',color:'#94a3b8',fontSize:13,border:'2px dashed #e2e8f0',borderRadius:10}}>
-                <div style={{fontSize:40,marginBottom:10,opacity:.5}}>📸</div>
-                <p style={{marginBottom:4}}>Ingen kvitteringer.</p>
-                <p style={{fontSize:11}}>Scan eller upload din første kvittering med knapperne øverst.</p>
-              </div>
-            ):(
+            {kobView==='galleri'&&(()=>{
+              const galleryReceipts=kobStoreFilter?receipts.filter(r=>(r.store||'').trim()===kobStoreFilter):receipts;
+              if(galleryReceipts.length===0){
+                return(
+                  <div style={{padding:'48px 20px',textAlign:'center',color:'#94a3b8',fontSize:13,border:'2px dashed #e2e8f0',borderRadius:10}}>
+                    <div style={{fontSize:40,marginBottom:10,opacity:.5}}>📸</div>
+                    <p style={{marginBottom:4}}>{kobStoreFilter?'Ingen kvitteringer fra "'+kobStoreFilter+'".':'Ingen kvitteringer.'}</p>
+                    <p style={{fontSize:11}}>{kobStoreFilter?'Vælg en anden butik eller "Alle".':'Scan eller upload din første kvittering med knapperne øverst.'}</p>
+                  </div>
+                );
+              }
+              return(
               <div style={{display:'grid',gridTemplateColumns:isMobile?'repeat(2,1fr)':'repeat(auto-fill,minmax(220px,1fr))',gap:isMobile?8:12}}>
-                {receipts.map(r=>{
+                {galleryReceipts.map(r=>{
                   const total=(r.lines||[]).reduce((s,l)=>s+(Number(l.amount)||0),0);
                   const nLinked=(r.lines||[]).filter(l=>l.linkedId).length;
                   const isBusy=analyzing===r.id;
@@ -1408,7 +1455,8 @@ function BudgetApp({session}){
                   );
                 })}
               </div>
-            ))}
+              );
+            })()}
           </div>
         );
       })()}
@@ -1698,6 +1746,19 @@ function BudgetApp({session}){
         const updateLine=(lineId,field,val)=>{setReceipts(p=>p.map(x=>x.id!==r.id?x:{...x,lines:x.lines.map(l=>l.id===lineId?{...l,[field]:val}:l)}));saveReceiptDebounced(r.id);};
         const addLine=()=>{setReceipts(p=>p.map(x=>x.id!==r.id?x:{...x,lines:[...(x.lines||[]),{id:'l'+Date.now(),desc:'',amount:'',linkedId:''}]}));saveReceiptDebounced(r.id);};
         const removeLine=lid=>{setReceipts(p=>p.map(x=>x.id!==r.id?x:{...x,lines:x.lines.filter(l=>l.id!==lid)}));saveReceiptDebounced(r.id);};
+        const splitLine=lid=>{setReceipts(p=>p.map(x=>{
+          if(x.id!==r.id)return x;
+          const idx=x.lines.findIndex(l=>l.id===lid);
+          if(idx<0)return x;
+          const orig=x.lines[idx];
+          const half=(Number(orig.amount)||0)/2;
+          const halfStr=half?String(Math.round(half*100)/100):'';
+          const newLine={id:'l'+Date.now(),desc:orig.desc||'',amount:halfStr,linkedId:orig.linkedId||''};
+          const newLines=[...x.lines];
+          newLines[idx]={...orig,amount:halfStr};
+          newLines.splice(idx+1,0,newLine);
+          return{...x,lines:newLines};
+        }));saveReceiptDebounced(r.id);};
         const total=(r.lines||[]).reduce((s,l)=>s+(Number(l.amount)||0),0);
         const isBusy=analyzing===r.id;
         return(
@@ -1746,11 +1807,13 @@ function BudgetApp({session}){
                 <div style={{display:'flex',flexDirection:'column',gap:6}}>
                   {(r.lines||[]).map((l,i)=>(
                     <div key={l.id} style={{border:'1px solid #e2e8f0',borderRadius:6,padding:8,background:'#fafbfc',display:'flex',flexDirection:'column',gap:6}}>
-                      <div style={{display:'grid',gridTemplateColumns:'1fr 100px 24px',gap:6,alignItems:'center'}}>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 100px 24px 24px',gap:6,alignItems:'center'}}>
                         <input value={l.desc} onChange={e=>updateLine(l.id,'desc',e.target.value)} placeholder="Beskrivelse"
                           style={{padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
                         <input type="number" inputMode="decimal" value={l.amount} onChange={e=>updateLine(l.id,'amount',e.target.value)} placeholder="kr"
                           style={{padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12,fontFamily:'inherit',outline:'none',textAlign:'right'}}/>
+                        <button onClick={()=>splitLine(l.id)} title="Del linje i to (halverer beløbet)"
+                          style={{border:'none',background:'transparent',cursor:'pointer',fontSize:13,color:'#94a3b8'}}>⎘</button>
                         <button onClick={()=>removeLine(l.id)} title="Fjern linje"
                           style={{border:'none',background:'transparent',cursor:'pointer',fontSize:14,color:'#cbd5e1'}}>✕</button>
                       </div>

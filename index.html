@@ -445,6 +445,7 @@ function BudgetApp({session}){
   const [dragId,setDragId]=useState(null);
   const [dragOver,setDragOver]=useState({id:null,side:null});
   const [budgetSearch,setBudgetSearch]=useState('');
+  const [searchLeavesOnly,setSearchLeavesOnly]=useState(false);
   const [kobStoreFilter,setKobStoreFilter]=useState('');
   const [splitFor,setSplitFor]=useState(null); // {rid, lid} when split modal is open
   const [toast,setToast]=useState(null);
@@ -726,20 +727,38 @@ function BudgetApp({session}){
 
   const toggleCollapse=id=>setCollapsed(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});
 
-  // When search is active: show items whose desc matches + all their ancestors (for context).
-  const searchMatches=useMemo(()=>{
+  // When search is active:
+  //   - tree mode (default): show matches + ancestors for context
+  //   - leaves mode: show only the deepest matches (those with no matching descendant)
+  const searchInfo=useMemo(()=>{
     const q=budgetSearch.trim().toLowerCase();
     if(!q)return null;
-    const ids=new Set();
-    data.forEach(d=>{
-      if((d.desc||'').toLowerCase().includes(q)){
-        ids.add(d.id);
-        let cur=d;
-        while(cur.parent){cur=dataMap.get(cur.parent);if(!cur)break;ids.add(cur.id);}
-      }
+    const direct=new Set();
+    data.forEach(d=>{if((d.desc||'').toLowerCase().includes(q))direct.add(d.id);});
+    // Leaves: matches with no matching descendant
+    const leaves=new Set();
+    direct.forEach(id=>{
+      const it=dataMap.get(id);
+      let hasMatchingDesc=false;
+      const walk=i=>{
+        if(!i?.children||hasMatchingDesc)return;
+        for(const cid of i.children){
+          if(direct.has(cid)){hasMatchingDesc=true;return;}
+          walk(dataMap.get(cid));
+        }
+      };
+      walk(it);
+      if(!hasMatchingDesc)leaves.add(id);
     });
-    return ids;
+    // Tree: matches + their ancestors
+    const tree=new Set(direct);
+    direct.forEach(id=>{
+      let cur=dataMap.get(id);
+      while(cur?.parent){cur=dataMap.get(cur.parent);if(!cur)break;tree.add(cur.id);}
+    });
+    return{direct,leaves,tree};
   },[budgetSearch,data,dataMap]);
+  const searchMatches=searchInfo?(searchLeavesOnly?searchInfo.leaves:searchInfo.tree):null;
 
   const isVisible=item=>{
     if(searchMatches)return searchMatches.has(item.id);
@@ -1226,29 +1245,34 @@ function BudgetApp({session}){
               <input value={budgetSearch} onChange={e=>setBudgetSearch(e.target.value)} placeholder="Søg i beskrivelser…"
                 style={{flex:1,maxWidth:360,padding:'5px 9px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:12,fontFamily:'inherit',outline:'none',background:'white'}}/>
               {budgetSearch&&<button onClick={()=>setBudgetSearch('')} style={{padding:'4px 8px',border:'none',background:'transparent',color:'#64748b',cursor:'pointer',fontSize:11,fontFamily:'inherit'}}>✕ Ryd</button>}
-              {searchMatches&&(()=>{
-                const q=budgetSearch.trim().toLowerCase();
-                const direct=[...searchMatches].filter(id=>{const it=dataMap.get(id);return it&&(it.desc||'').toLowerCase().includes(q);});
-                // Avoid double-counting nested matches: only sum top-most matches
-                const directSet=new Set(direct);
-                const roots=direct.filter(id=>{
-                  let cur=dataMap.get(id);
-                  while(cur?.parent){
-                    cur=dataMap.get(cur.parent);
-                    if(!cur)break;
-                    if(directSet.has(cur.id))return false;
-                  }
-                  return true;
-                });
+              {searchInfo&&(
+                <button onClick={()=>setSearchLeavesOnly(v=>!v)} title={searchLeavesOnly?'Vis hierarki (matches + parents)':'Vis kun de dybeste matches uden parents'}
+                  style={{padding:'5px 10px',borderRadius:6,border:'1px solid '+(searchLeavesOnly?tweaks.accentColor:'#e2e8f0'),background:searchLeavesOnly?tweaks.accentColor:'white',color:searchLeavesOnly?'white':'#475569',cursor:'pointer',fontSize:11,fontWeight:600,fontFamily:'inherit'}}>{searchLeavesOnly?'📋 Kun matches':'🌳 Hierarki'}</button>
+              )}
+              {searchInfo&&(()=>{
+                // Sum based on current mode:
+                //  - leaves: sum the deepest matches (no double-counting since they share no descendants)
+                //  - tree: sum top-most matches (their subtrees include their matching descendants)
+                let summed;
+                if(searchLeavesOnly){
+                  summed=[...searchInfo.leaves];
+                }else{
+                  const directSet=searchInfo.direct;
+                  summed=[...directSet].filter(id=>{
+                    let cur=dataMap.get(id);
+                    while(cur?.parent){cur=dataMap.get(cur.parent);if(!cur)break;if(directSet.has(cur.id))return false;}
+                    return true;
+                  });
+                }
                 let s=0,a=0;
-                roots.forEach(id=>{const m=metricsById.get(id);if(m){s+=m.sum;a+=m.actual;}});
-                const hasA=roots.some(id=>metricsById.get(id)?.hasActual);
+                summed.forEach(id=>{const m=metricsById.get(id);if(m){s+=m.sum;a+=m.actual;}});
+                const hasA=summed.some(id=>metricsById.get(id)?.hasActual);
                 return(
                   <span style={{marginLeft:'auto',padding:'5px 12px',background:'#dbeafe',borderRadius:6,fontSize:12,color:'#0f172a',whiteSpace:'nowrap'}}>
                     <span style={{color:'#64748b',fontSize:11,marginRight:6}}>Filtreret sum:</span>
                     <strong>{fmt(s)} kr</strong>
                     {hasA&&<span style={{marginLeft:8,color:'#475569',fontSize:11}}>· faktisk {fmt(a)} kr</span>}
-                    <span style={{color:'#94a3b8',marginLeft:6,fontSize:10}}>· {direct.length} match</span>
+                    <span style={{color:'#94a3b8',marginLeft:6,fontSize:10}}>· {searchInfo.direct.size} match{searchLeavesOnly&&searchInfo.leaves.size!==searchInfo.direct.size?' ('+searchInfo.leaves.size+' uden parents)':''}</span>
                   </span>
                 );
               })()}

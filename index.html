@@ -278,6 +278,65 @@ function SearchableLeafSelect({value,onChange,options,accent,placeholder='Søg e
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Dialog for splitting a receipt line into multiple parts
+// ═══════════════════════════════════════════════════════════════════
+function SplitDialog({line,onClose,onSplit,accent}){
+  const total=Number(line.amount)||0;
+  const [mode,setMode]=useState('evenly');
+  const [parts,setParts]=useState(2);
+  const [customAmount,setCustomAmount]=useState('');
+  const customNum=Number(customAmount)||0;
+  const remainder=Math.max(0,total-customNum);
+  const canSplit=mode==='evenly'?(parts>=2&&parts<=50):(customNum>0&&customNum<=total);
+  return(
+    <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',zIndex:600,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={onClose}>
+      <div style={{background:'white',borderRadius:12,padding:20,width:440,maxWidth:'100%',boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}} onClick={e=>e.stopPropagation()}>
+        <h3 style={{fontSize:15,fontWeight:700,color:'#0f172a',marginBottom:4}}>Del linje</h3>
+        <div style={{fontSize:12,color:'#64748b',marginBottom:14}}>{line.desc||<em>Ingen beskrivelse</em>} — <strong style={{color:'#0f172a'}}>{total.toLocaleString('da-DK')} kr</strong></div>
+
+        <label style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',border:'1px solid '+(mode==='evenly'?accent:'#e2e8f0'),borderRadius:8,cursor:'pointer',marginBottom:8,background:mode==='evenly'?'#f0f9ff':'white'}}>
+          <input type="radio" name="splitmode" checked={mode==='evenly'} onChange={()=>setMode('evenly')}/>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,fontWeight:600,color:'#0f172a',marginBottom:4}}>Del i lige store dele</div>
+            <div style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'#475569'}}>
+              <button type="button" onClick={()=>setParts(Math.max(2,parts-1))} disabled={mode!=='evenly'||parts<=2} style={{width:24,height:24,borderRadius:4,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:14,fontWeight:600,fontFamily:'inherit'}}>−</button>
+              <input type="number" min="2" max="50" value={parts} onChange={e=>setParts(Math.max(2,Math.min(50,parseInt(e.target.value,10)||2)))} disabled={mode!=='evenly'} onClick={e=>{e.stopPropagation();setMode('evenly')}}
+                style={{width:50,padding:'3px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12,fontFamily:'inherit',textAlign:'center',outline:'none'}}/>
+              <button type="button" onClick={()=>setParts(Math.min(50,parts+1))} disabled={mode!=='evenly'||parts>=50} style={{width:24,height:24,borderRadius:4,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:14,fontWeight:600,fontFamily:'inherit'}}>+</button>
+              <span style={{marginLeft:6,color:'#94a3b8'}}>→ {parts} × {(total/parts).toLocaleString('da-DK',{maximumFractionDigits:2})} kr</span>
+            </div>
+          </div>
+        </label>
+
+        <label style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',border:'1px solid '+(mode==='custom'?accent:'#e2e8f0'),borderRadius:8,cursor:'pointer',marginBottom:14,background:mode==='custom'?'#f0f9ff':'white'}}>
+          <input type="radio" name="splitmode" checked={mode==='custom'} onChange={()=>setMode('custom')}/>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,fontWeight:600,color:'#0f172a',marginBottom:4}}>Skab ny linje med beløb</div>
+            <div style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'#475569'}}>
+              <input type="number" inputMode="decimal" min="0" step="any" value={customAmount} onChange={e=>setCustomAmount(e.target.value)} placeholder="kr" disabled={mode!=='custom'} onClick={e=>{e.stopPropagation();setMode('custom')}}
+                style={{width:90,padding:'4px 7px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:12,fontFamily:'inherit',textAlign:'right',outline:'none'}}/>
+              <span style={{color:'#94a3b8'}}>kr på ny linje</span>
+              {mode==='custom'&&customNum>0&&customNum<=total&&<span style={{marginLeft:'auto',fontSize:11,color:'#64748b'}}>rest: {remainder.toLocaleString('da-DK',{maximumFractionDigits:2})} kr</span>}
+              {mode==='custom'&&customNum>total&&<span style={{marginLeft:'auto',fontSize:11,color:'#dc2626'}}>Større end total!</span>}
+            </div>
+          </div>
+        </label>
+
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <button onClick={onClose} style={{padding:'7px 14px',border:'1px solid #e2e8f0',background:'white',color:'#475569',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'inherit'}}>Annuller</button>
+          <button disabled={!canSplit}
+            onClick={()=>{
+              if(mode==='evenly')onSplit(parts,null);
+              else onSplit(null,customNum);
+            }}
+            style={{padding:'7px 14px',border:'none',background:canSplit?accent:'#cbd5e1',color:'white',borderRadius:6,cursor:canSplit?'pointer':'not-allowed',fontSize:12,fontWeight:600,fontFamily:'inherit'}}>Del</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // AUTH GATE
 // ═══════════════════════════════════════════════════════════════════
 function LoginScreen(){
@@ -387,6 +446,7 @@ function BudgetApp({session}){
   const [dragOver,setDragOver]=useState({id:null,side:null});
   const [budgetSearch,setBudgetSearch]=useState('');
   const [kobStoreFilter,setKobStoreFilter]=useState('');
+  const [splitFor,setSplitFor]=useState(null); // {rid, lid} when split modal is open
   const [toast,setToast]=useState(null);
   const [tweaks,setTweaks]=useState(TWEAK_DEFAULTS);
   const [tweaksVisible,setTweaksVisible]=useState(false);
@@ -1305,6 +1365,25 @@ function BudgetApp({session}){
                   </select>
                 );
               })()}
+              {(()=>{
+                const isFiltered=filter!=='all'||!!kobStoreFilter;
+                let displaySum=0,displayCount=0;
+                if(kobView==='liste'){
+                  displaySum=filtered.reduce((s,l)=>s+l.amount,0);
+                  displayCount=filtered.length;
+                }else{
+                  const galleryReceipts=kobStoreFilter?receipts.filter(r=>(r.store||'').trim()===kobStoreFilter):receipts;
+                  galleryReceipts.forEach(r=>(r.lines||[]).forEach(l=>{displaySum+=Number(l.amount)||0;}));
+                  displayCount=galleryReceipts.length;
+                }
+                return(
+                  <span style={{marginLeft:'auto',padding:'5px 12px',background:isFiltered?'#dbeafe':'#f1f5f9',borderRadius:6,fontSize:12,color:'#0f172a',whiteSpace:'nowrap'}}>
+                    <span style={{color:'#64748b',marginRight:6,fontSize:11}}>{isFiltered?'Filtreret sum':'Sum'}:</span>
+                    <strong>{fmt(displaySum)} kr</strong>
+                    <span style={{color:'#94a3b8',marginLeft:6,fontSize:10}}>· {displayCount} {kobView==='liste'?(displayCount===1?'linje':'linjer'):(displayCount===1?'kvittering':'kvitteringer')}</span>
+                  </span>
+                );
+              })()}
             </div>
 
             {/* Liste view — journal */}
@@ -1746,19 +1825,7 @@ function BudgetApp({session}){
         const updateLine=(lineId,field,val)=>{setReceipts(p=>p.map(x=>x.id!==r.id?x:{...x,lines:x.lines.map(l=>l.id===lineId?{...l,[field]:val}:l)}));saveReceiptDebounced(r.id);};
         const addLine=()=>{setReceipts(p=>p.map(x=>x.id!==r.id?x:{...x,lines:[...(x.lines||[]),{id:'l'+Date.now(),desc:'',amount:'',linkedId:''}]}));saveReceiptDebounced(r.id);};
         const removeLine=lid=>{setReceipts(p=>p.map(x=>x.id!==r.id?x:{...x,lines:x.lines.filter(l=>l.id!==lid)}));saveReceiptDebounced(r.id);};
-        const splitLine=lid=>{setReceipts(p=>p.map(x=>{
-          if(x.id!==r.id)return x;
-          const idx=x.lines.findIndex(l=>l.id===lid);
-          if(idx<0)return x;
-          const orig=x.lines[idx];
-          const half=(Number(orig.amount)||0)/2;
-          const halfStr=half?String(Math.round(half*100)/100):'';
-          const newLine={id:'l'+Date.now(),desc:orig.desc||'',amount:halfStr,linkedId:orig.linkedId||''};
-          const newLines=[...x.lines];
-          newLines[idx]={...orig,amount:halfStr};
-          newLines.splice(idx+1,0,newLine);
-          return{...x,lines:newLines};
-        }));saveReceiptDebounced(r.id);};
+        const splitLine=lid=>setSplitFor({rid:r.id,lid});
         const total=(r.lines||[]).reduce((s,l)=>s+(Number(l.amount)||0),0);
         const isBusy=analyzing===r.id;
         return(
@@ -1862,6 +1929,41 @@ function BudgetApp({session}){
             </div>
           </div>
         );
+      })()}
+      {splitFor&&(()=>{
+        const r=receipts.find(x=>x.id===splitFor.rid);
+        const l=r?.lines.find(x=>x.id===splitFor.lid);
+        if(!r||!l){return null;}
+        return <SplitDialog
+          line={l}
+          onClose={()=>setSplitFor(null)}
+          onSplit={(parts,customAmount)=>{
+            setReceipts(p=>p.map(x=>{
+              if(x.id!==splitFor.rid)return x;
+              const idx=x.lines.findIndex(ll=>ll.id===splitFor.lid);
+              if(idx<0)return x;
+              const orig=x.lines[idx];
+              const total=Number(orig.amount)||0;
+              const newLines=[...x.lines];
+              if(customAmount!=null){
+                const newAmt=Math.max(0,Math.min(total,Number(customAmount)||0));
+                const remainder=total-newAmt;
+                newLines[idx]={...orig,amount:remainder?String(Math.round(remainder*100)/100):''};
+                newLines.splice(idx+1,0,{id:'l'+Date.now(),desc:orig.desc||'',amount:newAmt?String(Math.round(newAmt*100)/100):'',linkedId:orig.linkedId||''});
+              }else{
+                const part=total/parts;
+                const partStr=part?String(Math.round(part*100)/100):'';
+                newLines[idx]={...orig,amount:partStr};
+                for(let i=1;i<parts;i++){
+                  newLines.splice(idx+i,0,{id:'l'+Date.now()+'-'+i,desc:orig.desc||'',amount:partStr,linkedId:orig.linkedId||''});
+                }
+              }
+              return{...x,lines:newLines};
+            }));
+            saveReceiptDebounced(splitFor.rid);
+            setSplitFor(null);
+          }}
+          accent={tweaks.accentColor}/>;
       })()}
       {editingLink&&dataMap.get(editingLink)&&<LinkEditor item={dataMap.get(editingLink)}/>}
       {toast&&<div className="toast">{toast}</div>}

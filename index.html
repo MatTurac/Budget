@@ -1104,7 +1104,10 @@ function BudgetApp({session}){
     const[tmp,setTmp]=useState(String(value??''));
     useEffect(()=>{setTmp(String(value??''))},[value]);
     const formatter=decimals?fmt2:fmt;
-    if(!isEd)return<span onClick={e=>{e.stopPropagation();setEditingCell({id,field});setTmp(value==null||value===''?'':String(value))}} style={{cursor:'text',display:'block',width:'100%',minHeight:18,textAlign:align||'left'}}>{numeric&&value!=null&&value!==''?formatter(value):(value??(numeric?<span style={{color:'#cbd5e1'}}>—</span>:''))}</span>;
+    // Render as a flex-filled clickable box so any click within the column hits the cell
+    // (instead of bubbling up to the row's onClick which only selects).
+    if(!isEd)return<div onClick={e=>{e.stopPropagation();setEditingCell({id,field});setTmp(value==null||value===''?'':String(value))}}
+      style={{cursor:'text',display:'flex',alignItems:'center',justifyContent:align==='right'?'flex-end':'flex-start',width:'100%',minHeight:24,padding:'2px 0'}}>{numeric&&value!=null&&value!==''?formatter(value):(value??(numeric?<span style={{color:'#cbd5e1'}}>—</span>:''))}</div>;
     return<input autoFocus value={tmp} onChange={e=>setTmp(e.target.value)} onFocus={e=>e.target.select()} inputMode={numeric?'decimal':'text'}
       onBlur={()=>{
         const trimmed=tmp.trim();

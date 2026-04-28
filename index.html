@@ -455,7 +455,21 @@ function BudgetApp({session}){
   const [stuckL2,setStuckL2]=useState(new Set());
   const [isMobile,setIsMobile]=useState(window.innerWidth<=700);
   const tableRef=useRef(null);
-  const stickyHeaderH=128;
+  const stickyTopRef=useRef(null);
+  const [stickyHeaderH,setStickyHeaderH]=useState(128);
+  useEffect(()=>{
+    if(!stickyTopRef.current)return;
+    const el=stickyTopRef.current;
+    const update=()=>setStickyHeaderH(el.offsetHeight);
+    update();
+    if(window.ResizeObserver){
+      const ro=new ResizeObserver(update);
+      ro.observe(el);
+      return()=>ro.disconnect();
+    }
+    window.addEventListener('resize',update);
+    return()=>window.removeEventListener('resize',update);
+  },[activeTab,isMobile,budgetSearch]);
 
   const showToast=msg=>{setToast(msg);setTimeout(()=>setToast(null),2500)};
 
@@ -785,29 +799,81 @@ function BudgetApp({session}){
 
   const addChild=parentId=>{
     const parent=dataMap.get(parentId);if(!parent||parent.level>=MAX_LEVEL)return;
-    const existing=parent.children||[];const newId=parentId+'.'+(existing.length+1);
-    const newItem={id:newId,level:parent.level+1,desc:'Ny post',parent:parentId,antal:0,pris:0,enhed:'stk',kategori:''};
+    // Use a temp id so renumber will assign a proper sequential one
+    const tmpId='_tmp_'+Date.now();
+    const newItem={id:tmpId,level:parent.level+1,desc:'Ny post',parent:parentId,antal:0,pris:0,enhed:'stk',kategori:''};
     setData(prev=>{
-      const u=prev.map(d=>d.id===parentId?{...d,children:[...(d.children||[]),newId]}:d);
+      const u=prev.map(d=>d.id===parentId?{...d,children:[...(d.children||[]),tmpId]}:d);
       const pidx=u.findIndex(d=>d.id===parentId);let ins=pidx+1;
       while(ins<u.length&&u[ins].level>parent.level)ins++;
-      u.splice(ins,0,newItem);return[...u];
+      u.splice(ins,0,newItem);
+      return renumberApplied([...u]);
     });
   };
 
   const addTopLevel=()=>{
-    const top=data.filter(d=>d.level===1);
-    const nextN=top.length?Math.max(...top.map(d=>parseInt(d.id,10)||0))+1:1;
-    const newId=String(nextN);
-    const newItem={id:newId,level:1,desc:'Nyt hovedprojekt',children:[]};
-    setData(prev=>[...prev,newItem]);
+    const tmpId='_tmp_'+Date.now();
+    const newItem={id:tmpId,level:1,desc:'Nyt hovedprojekt',children:[]};
+    setData(prev=>renumberApplied([...prev,newItem]));
   };
 
   const deleteItem=id=>{
     const item=dataMap.get(id);if(!item)return;
     const rem=new Set();const collect=i=>{rem.add(i);const it=dataMap.get(i);if(it?.children)it.children.forEach(collect);};collect(id);
-    setData(prev=>{let u=prev.filter(d=>!rem.has(d.id));if(item.parent)u=u.map(d=>d.id===item.parent?{...d,children:(d.children||[]).filter(c=>c!==id)}:d);return u;});
+    setData(prev=>{
+      let u=prev.filter(d=>!rem.has(d.id));
+      if(item.parent)u=u.map(d=>d.id===item.parent?{...d,children:(d.children||[]).filter(c=>c!==id)}:d);
+      return renumberApplied(u);
+    });
     if(selectedId===id)setSelectedId(null);
+  };
+
+  // Renumber every row so IDs match visual order (1, 1.1, 1.1.1, …) and cascade-update
+  // any receipt linkedIds. Returns the new data array. Mutates receipts via setReceipts.
+  const renumberApplied=(transformed)=>{
+    const idMap=new Map();
+    const childCounter=new Map();
+    transformed.forEach(item=>{
+      let newId;
+      if(item.level===1){
+        const cnt=childCounter.get('__root__')||0;
+        childCounter.set('__root__',cnt+1);
+        newId=String(cnt+1);
+      }else{
+        const parentNewId=idMap.get(item.parent);
+        if(!parentNewId){idMap.set(item.id,item.id);return;}
+        const cnt=childCounter.get(item.parent)||0;
+        childCounter.set(item.parent,cnt+1);
+        newId=parentNewId+'.'+(cnt+1);
+      }
+      idMap.set(item.id,newId);
+    });
+    const renumbered=transformed.map(item=>{
+      const ni=idMap.get(item.id);
+      const np=item.parent?idMap.get(item.parent):undefined;
+      const nc=item.children?item.children.map(c=>idMap.get(c)||c):undefined;
+      return{...item,id:ni||item.id,...(item.parent?{parent:np||item.parent}:{}),...(item.children?{children:nc}:{})};
+    });
+    // Cascade rename to receipt linkedIds
+    const currentReceipts=receiptsRef.current;
+    let anyChanged=false;
+    const newReceipts=currentReceipts.map(r=>{
+      let changed=false;
+      const newLines=(r.lines||[]).map(l=>{
+        if(l.linkedId&&idMap.has(l.linkedId)){
+          const mapped=idMap.get(l.linkedId);
+          if(mapped!==l.linkedId){changed=true;return{...l,linkedId:mapped};}
+        }
+        return l;
+      });
+      if(changed){anyChanged=true;return{...r,lines:newLines};}
+      return r;
+    });
+    if(anyChanged){
+      setReceipts(newReceipts);
+      newReceipts.forEach((r,i)=>{if(r!==currentReceipts[i])saveReceiptDebounced(r.id);});
+    }
+    return renumbered;
   };
 
   // Move an item up or down within its siblings (or within top-level items).
@@ -856,7 +922,7 @@ function BudgetApp({session}){
         i=j;
       }
       const reordered=newSiblings.flatMap(sid=>subtrees.get(sid)||[]);
-      return[...u.slice(0,subtreeStart),...reordered,...u.slice(subtreeEnd)];
+      return renumberApplied([...u.slice(0,subtreeStart),...reordered,...u.slice(subtreeEnd)]);
     });
   };
 
@@ -904,7 +970,7 @@ function BudgetApp({session}){
         i=j;
       }
       const reordered=siblings.flatMap(sid=>subtrees.get(sid)||[]);
-      return[...u.slice(0,subtreeStart),...reordered,...u.slice(subtreeEnd)];
+      return renumberApplied([...u.slice(0,subtreeStart),...reordered,...u.slice(subtreeEnd)]);
     });
   };
 
@@ -1212,7 +1278,7 @@ function BudgetApp({session}){
   return(
     <div style={{minHeight:'100vh',background:'#f0f2f5'}}>
       {/* ═══ STICKY TOP ═══ */}
-      <div className="sticky-top" style={{padding:'12px 16px 0',boxShadow:'0 2px 8px rgba(0,0,0,0.06)'}}>
+      <div ref={stickyTopRef} className="sticky-top" style={{padding:'12px 16px 0',boxShadow:'0 2px 8px rgba(0,0,0,0.06)'}}>
         <div className="mobile-header" style={{maxWidth:1300,margin:'0 auto 8px',display:'flex',alignItems:'flex-end',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
           <div>
             <h1 style={{fontSize:isMobile?18:22,fontWeight:700,color:'#0f172a',letterSpacing:'-0.02em'}}>Projekt budget</h1>

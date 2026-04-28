@@ -149,6 +149,52 @@ function hasAnyActual(item,dataMap,receiptSums){
 }
 function calcSCT(sc){return sc.items.reduce((s,it)=>s+(it.antal||0)*(it.pris||0),0)}
 
+// Position-based renumber that handles duplicate ids gracefully (each item gets a unique
+// new id based on its index in the data array). Returns {data, receipts, oldToNew}.
+function renumberPure(data,receipts){
+  const newIds=new Array(data.length);
+  const idToFirstIndex=new Map();
+  data.forEach((item,i)=>{if(!idToFirstIndex.has(item.id))idToFirstIndex.set(item.id,i);});
+  const childCounter=new Map();
+  data.forEach((item,i)=>{
+    if(item.level===1){
+      const cnt=childCounter.get('__root__')||0;
+      childCounter.set('__root__',cnt+1);
+      newIds[i]=String(cnt+1);
+    }else{
+      const pi=idToFirstIndex.get(item.parent);
+      if(pi==null||newIds[pi]==null){newIds[i]=item.id;return;}
+      const cnt=childCounter.get(pi)||0;
+      childCounter.set(pi,cnt+1);
+      newIds[i]=newIds[pi]+'.'+(cnt+1);
+    }
+  });
+  // For receipts and parent/children references we use the FIRST occurrence's new id when there
+  // are duplicates — they're inherently ambiguous, so picking one is the best we can do.
+  const oldToNew=new Map();
+  data.forEach((item,i)=>{if(!oldToNew.has(item.id))oldToNew.set(item.id,newIds[i]);});
+  const renumberedData=data.map((item,i)=>{
+    const newItem={...item,id:newIds[i]};
+    if(item.parent){const np=oldToNew.get(item.parent);if(np)newItem.parent=np;}
+    if(item.children)newItem.children=item.children.map(c=>oldToNew.get(c)||c);
+    return newItem;
+  });
+  let anyChanged=false;
+  const renumberedReceipts=(receipts||[]).map(r=>{
+    let changed=false;
+    const newLines=(r.lines||[]).map(l=>{
+      if(l.linkedId&&oldToNew.has(l.linkedId)){
+        const m=oldToNew.get(l.linkedId);
+        if(m!==l.linkedId){changed=true;return{...l,linkedId:m};}
+      }
+      return l;
+    });
+    if(changed){anyChanged=true;return{...r,lines:newLines};}
+    return r;
+  });
+  return{data:renumberedData,receipts:renumberedReceipts,oldToNew,anyReceiptChanged:anyChanged};
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Searchable combobox for linking a receipt line to a budget post.
 // Shows id + description + ancestor breadcrumb (mirroring the tree hierarchy).
@@ -501,10 +547,6 @@ function BudgetApp({session}){
           const {error:insErr}=await supabase.from('user_budgets').insert({user_id:userId,data:nextData,sub_calcs:{subCalcs:nextSC,categories:nextCats}});
           if(insErr)throw insErr;
         }
-        setData(nextData);
-        setSubCalcs(nextSC);
-        setCategories(nextCats);
-
         const {data:rs,error:rErr}=await supabase.from('receipts').select('*').eq('user_id',userId).order('created',{ascending:false});
         if(rErr)throw rErr;
         const withUrls=await Promise.all((rs||[]).map(async r=>{
@@ -515,7 +557,18 @@ function BudgetApp({session}){
           }
           return{id:r.id,image:imageUrl,imagePath:r.image_path,store:r.store||'',date:r.date||'',note:r.note||'',lines:r.lines||[],created:r.created?new Date(r.created).getTime():Date.now()};
         }));
-        setReceipts(withUrls);
+        // Normalize ids (handles legacy data with gaps or duplicates).
+        const norm=renumberPure(nextData,withUrls);
+        setData(norm.data);
+        setSubCalcs(nextSC);
+        setCategories(nextCats);
+        setReceipts(norm.receipts);
+        // Persist any receipt linkedId changes (after the per-receipt save effect is wired up).
+        if(norm.anyReceiptChanged){
+          setTimeout(()=>{
+            norm.receipts.forEach((r,i)=>{if(r!==withUrls[i])saveReceiptDebounced(r.id);});
+          },0);
+        }
       }catch(e){
         console.error('Load failed:',e);
         setLoadError(e.message||'Kunne ikke hente data');
@@ -833,50 +886,16 @@ function BudgetApp({session}){
 
   // Renumber every row so IDs match visual order (1, 1.1, 1.1.1, …) and cascade-update
   // any receipt linkedIds. Returns the new data array. Mutates receipts via setReceipts.
+  // Position-based: handles duplicate ids in legacy data by assigning each occurrence a
+  // unique new id based on its index.
   const renumberApplied=(transformed)=>{
-    const idMap=new Map();
-    const childCounter=new Map();
-    transformed.forEach(item=>{
-      let newId;
-      if(item.level===1){
-        const cnt=childCounter.get('__root__')||0;
-        childCounter.set('__root__',cnt+1);
-        newId=String(cnt+1);
-      }else{
-        const parentNewId=idMap.get(item.parent);
-        if(!parentNewId){idMap.set(item.id,item.id);return;}
-        const cnt=childCounter.get(item.parent)||0;
-        childCounter.set(item.parent,cnt+1);
-        newId=parentNewId+'.'+(cnt+1);
-      }
-      idMap.set(item.id,newId);
-    });
-    const renumbered=transformed.map(item=>{
-      const ni=idMap.get(item.id);
-      const np=item.parent?idMap.get(item.parent):undefined;
-      const nc=item.children?item.children.map(c=>idMap.get(c)||c):undefined;
-      return{...item,id:ni||item.id,...(item.parent?{parent:np||item.parent}:{}),...(item.children?{children:nc}:{})};
-    });
-    // Cascade rename to receipt linkedIds
-    const currentReceipts=receiptsRef.current;
-    let anyChanged=false;
-    const newReceipts=currentReceipts.map(r=>{
-      let changed=false;
-      const newLines=(r.lines||[]).map(l=>{
-        if(l.linkedId&&idMap.has(l.linkedId)){
-          const mapped=idMap.get(l.linkedId);
-          if(mapped!==l.linkedId){changed=true;return{...l,linkedId:mapped};}
-        }
-        return l;
-      });
-      if(changed){anyChanged=true;return{...r,lines:newLines};}
-      return r;
-    });
-    if(anyChanged){
-      setReceipts(newReceipts);
-      newReceipts.forEach((r,i)=>{if(r!==currentReceipts[i])saveReceiptDebounced(r.id);});
+    const result=renumberPure(transformed,receiptsRef.current);
+    if(result.anyReceiptChanged){
+      const prev=receiptsRef.current;
+      setReceipts(result.receipts);
+      result.receipts.forEach((r,i)=>{if(r!==prev[i])saveReceiptDebounced(r.id);});
     }
-    return renumbered;
+    return result.data;
   };
 
   // Move an item up or down within its siblings (or within top-level items).

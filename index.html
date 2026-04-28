@@ -48,7 +48,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "accentColor": "#2563eb"
 }/*EDITMODE-END*/;
 
-const {useState,useEffect,useRef,useMemo,useCallback} = React;
+const {useState,useEffect,useLayoutEffect,useRef,useMemo,useCallback} = React;
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const fmt  = n=>n==null?'':n.toLocaleString('da-DK',{minimumFractionDigits:0,maximumFractionDigits:0});
@@ -456,11 +456,14 @@ function BudgetApp({session}){
   const [isMobile,setIsMobile]=useState(window.innerWidth<=700);
   const tableRef=useRef(null);
   const stickyTopRef=useRef(null);
-  const [stickyHeaderH,setStickyHeaderH]=useState(128);
-  useEffect(()=>{
+  const [stickyHeaderH,setStickyHeaderH]=useState(160);
+  useLayoutEffect(()=>{
     if(!stickyTopRef.current)return;
     const el=stickyTopRef.current;
-    const update=()=>setStickyHeaderH(el.offsetHeight);
+    const update=()=>{
+      const h=el.offsetHeight;
+      setStickyHeaderH(prev=>prev!==h?h:prev);
+    };
     update();
     if(window.ResizeObserver){
       const ro=new ResizeObserver(update);
@@ -469,7 +472,7 @@ function BudgetApp({session}){
     }
     window.addEventListener('resize',update);
     return()=>window.removeEventListener('resize',update);
-  },[activeTab,isMobile,budgetSearch]);
+  },[]);
 
   const showToast=msg=>{setToast(msg);setTimeout(()=>setToast(null),2500)};
 
@@ -1674,7 +1677,7 @@ function BudgetApp({session}){
               else if(cur)cur.rest.push(it);
               else{cur={l1:null,l1Idx:0,rest:[it]};groups.push(cur);}
             });
-            const renderRow=(item,gIdx)=>{
+            const renderRow=(item,gIdx,hasL1)=>{
             const {sum,actual,hasActual,diff}=getM(item.id);
             const lc=levelColors[item.level]||levelColors[5];
             const hasKids=item.children?.length>0;const isCol=collapsed.has(item.id);const isSel=selectedId===item.id;
@@ -1717,7 +1720,10 @@ function BudgetApp({session}){
                   ...(item.level===1?{position:'sticky',top:stickyHeaderH+gIdx*38,zIndex:92,background:isSel?'#dbeafe':'#1e293b',boxShadow:'0 1px 3px rgba(0,0,0,0.1)'}:{}),
                   ...(item.level===2?(()=>{
                     const idx=lvl2StickyMap.get(item.id)||0;
-                    return{position:'sticky',top:stickyHeaderH+(gIdx+1)*38+(idx*34),zIndex:91-idx,background:isSel?'#dbeafe':'#e8eef6',boxShadow:'0 1px 2px rgba(0,0,0,0.06)'};
+                    // When the parent level-1 isn't visible (orphan group, e.g. leaves-only search),
+                    // stick the level-2 directly under the page header — no phantom 38px gap.
+                    const baseTop=hasL1?stickyHeaderH+(gIdx+1)*38:stickyHeaderH;
+                    return{position:'sticky',top:baseTop+(idx*34),zIndex:91-idx,background:isSel?'#dbeafe':'#e8eef6',boxShadow:'0 1px 2px rgba(0,0,0,0.06)'};
                   })():{})
                 }}
                 onMouseEnter={e=>{if(!isSel&&!dragId)e.currentTarget.style.background=item.level===1?lc.bg:'#f8fafc'}}
@@ -1775,8 +1781,8 @@ function BudgetApp({session}){
             };
             return groups.map((g,i)=>(
               <React.Fragment key={g.l1?'g-'+g.l1.id:'orphan-'+i}>
-                {g.l1&&renderRow(g.l1,g.l1Idx)}
-                <div>{g.rest.map(it=>renderRow(it,g.l1Idx))}</div>
+                {g.l1&&renderRow(g.l1,g.l1Idx,true)}
+                <div>{g.rest.map(it=>renderRow(it,g.l1Idx,!!g.l1))}</div>
               </React.Fragment>
             ));
           })()}

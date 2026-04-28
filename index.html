@@ -1823,12 +1823,37 @@ function BudgetApp({session}){
               </div>
             );
             };
-            return groups.map((g,i)=>(
-              <React.Fragment key={g.l1?'g-'+g.l1.id:'orphan-'+i}>
-                {g.l1&&renderRow(g.l1,g.l1Idx,true)}
-                <div>{g.rest.map(it=>renderRow(it,g.l1Idx,!!g.l1))}</div>
-              </React.Fragment>
-            ));
+            return groups.map((g,i)=>{
+              // Sub-group g.rest by level-2 parent so each level-2's subtree gets its own
+              // wrapper. That way the level-3 sticky rows are scoped to their level-2's
+              // content — when you scroll past a level-2's children, the stuck level-3s
+              // scroll away with that wrapper instead of persisting under the next level-2.
+              const subGroups=[];let cur=null;
+              g.rest.forEach(item=>{
+                if(item.level===2){cur={l2:item,rest:[]};subGroups.push(cur);}
+                else if(cur)cur.rest.push(item);
+                else{
+                  if(subGroups.length&&!subGroups[subGroups.length-1].l2){
+                    subGroups[subGroups.length-1].rest.push(item);
+                  }else{
+                    subGroups.push({l2:null,rest:[item]});
+                  }
+                }
+              });
+              return(
+                <React.Fragment key={g.l1?'g-'+g.l1.id:'orphan-'+i}>
+                  {g.l1&&renderRow(g.l1,g.l1Idx,true)}
+                  <div>
+                    {subGroups.map((sg,si)=>(
+                      <React.Fragment key={sg.l2?'l2-'+sg.l2.id:'orph-'+i+'-'+si}>
+                        {sg.l2&&renderRow(sg.l2,g.l1Idx,!!g.l1)}
+                        <div>{sg.rest.map(it=>renderRow(it,g.l1Idx,!!g.l1))}</div>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </React.Fragment>
+              );
+            });
           })()}
           <div style={{padding:'10px 14px',borderTop:'1px solid #e8ecf0',display:'flex',justifyContent:'flex-start'}}>
             <button onClick={addTopLevel}

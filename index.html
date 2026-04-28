@@ -1734,7 +1734,7 @@ function BudgetApp({session}){
             const isDragOverAbove=dragOver.id===item.id&&dragOver.side==='above';
             const isDragOverBelow=dragOver.id===item.id&&dragOver.side==='below';
             return(
-              <div key={item.id} data-row-id={item.id} data-row-level={item.level} className="budget-row" onClick={()=>setSelectedId(item.id)}
+              <div key={item.id} data-row-id={item.id} data-row-level={item.level} className="budget-row"
                 onDragOver={e=>{
                   if(!dragId||dragId===item.id)return;
                   const src=dataMap.get(dragId);

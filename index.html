@@ -1107,7 +1107,7 @@ function BudgetApp({session}){
     // Render as a flex-filled clickable box so any click within the column hits the cell
     // (instead of bubbling up to the row's onClick which only selects).
     if(!isEd)return<div onClick={e=>{e.stopPropagation();setEditingCell({id,field});setTmp(value==null||value===''?'':String(value))}}
-      style={{cursor:'text',display:'flex',alignItems:'center',justifyContent:align==='right'?'flex-end':'flex-start',width:'100%',minHeight:24,padding:'2px 0'}}>{numeric&&value!=null&&value!==''?formatter(value):(value??(numeric?<span style={{color:'#cbd5e1'}}>—</span>:''))}</div>;
+      style={{cursor:'text',display:'flex',alignItems:'center',justifyContent:align==='right'?'flex-end':'flex-start',width:'100%',minHeight:20,height:'100%',boxSizing:'border-box'}}>{numeric&&value!=null&&value!==''?formatter(value):(value??(numeric?<span style={{color:'#cbd5e1'}}>—</span>:''))}</div>;
     return<input autoFocus value={tmp} onChange={e=>setTmp(e.target.value)} onFocus={e=>e.target.select()} inputMode={numeric?'decimal':'text'}
       onBlur={()=>{
         const trimmed=tmp.trim();
@@ -1754,7 +1754,7 @@ function BudgetApp({session}){
                   setDragId(null);
                   setDragOver({id:null,side:null});
                 }}
-                style={{display:'grid',gridTemplateColumns:gridCols,padding:'5px 10px',alignItems:'center',gap:'0 12px',
+                style={{display:'grid',gridTemplateColumns:gridCols,padding:'5px 10px',alignItems:'stretch',gap:'0 12px',
                   background:isSel?'#dbeafe':lc.bg,
                   borderTop:isDragOverAbove?'2px solid '+tweaks.accentColor:'none',
                   borderBottom:isDragOverBelow?'2px solid '+tweaks.accentColor:'1px solid #e8ecf0',
@@ -1795,7 +1795,7 @@ function BudgetApp({session}){
                 <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4,minWidth:0}}>
                   {showOwn&&item.level>=3&&(hasSC
                     ?<span style={{color:tweaks.accentColor,fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title="Fra underberegning">{fmt(item.pris)}</span>
-                    :<span style={{flex:1,minWidth:0,textAlign:'right'}}><EditableCell id={item.id} field="pris" value={item.pris} numeric align="right"/></span>)}
+                    :<div style={{flex:1,minWidth:0,display:'flex',alignItems:'center',justifyContent:'flex-end'}}><EditableCell id={item.id} field="pris" value={item.pris} numeric align="right"/></div>)}
                   {showOwn&&item.level>=3&&!item.children?.length&&<button onClick={e=>{e.stopPropagation();setSubcalcFor(item.id)}} title={hasSC?'Underberegning (klik for at ændre)':'Tilføj underberegning'}
                     style={{width:16,height:16,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:hasSC?tweaks.accentColor:'#cbd5e1',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>⚙</button>}
                 </div>

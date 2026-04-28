@@ -850,17 +850,20 @@ function BudgetApp({session}){
       if(item.level===2){m.set(item.id,count);count++;}
     });return m;
   },[data,detailLevel,collapsed]);
-  // Map each level-3 item to its level-2 parent's lvl2StickyMap index, so we can compute
-  // the level-3 sticky top relative to where the level-2 parent sits in the stack.
+  // For each visible level-3 item: track its level-2 parent's stack index AND its own sibling
+  // index within that level-2 parent — so multiple level-3 rows under one level-2 stack like
+  // level-2 rows stack under their level-1.
   const lvl3StickyMap=useMemo(()=>{
     const m=new Map();
-    data.forEach(item=>{
-      if(item.level!==3)return;
-      const l2idx=lvl2StickyMap.get(item.parent);
-      if(l2idx==null)return;
-      m.set(item.id,l2idx);
+    let count=0;
+    data.filter(isVisible).forEach(item=>{
+      if(item.level<=2){count=0;}
+      if(item.level===3){
+        const l2idx=lvl2StickyMap.get(item.parent);
+        if(l2idx!=null){m.set(item.id,{l2idx,l3idx:count});count++;}
+      }
     });return m;
-  },[data,lvl2StickyMap]);
+  },[data,lvl2StickyMap,detailLevel,collapsed]);
 
   const updateItem=(id,field,value)=>setData(p=>p.map(d=>d.id===id?{...d,[field]:value}:d));
 
@@ -1756,11 +1759,15 @@ function BudgetApp({session}){
                     return{position:'sticky',top:baseTop+(idx*34),zIndex:91-idx,background:isSel?'#dbeafe':'#e8eef6',boxShadow:'0 1px 2px rgba(0,0,0,0.06)'};
                   })():{}),
                   ...(item.level===3&&item.children?.length?(()=>{
-                    // Level-3 stickies just below its level-2 parent (when that parent is stuck).
-                    const l2idx=lvl3StickyMap.get(item.id);
-                    if(l2idx==null)return {};
+                    // Level-3 sits just below its level-2 parent's stuck position. Multiple
+                    // level-3s under the same level-2 stack with l3idx*30 offsets — same idea
+                    // as level-2 stacking under level-1. Lower z-index than level-2 so newer
+                    // level-2s scrolling in cover the old level-3 cleanly.
+                    const info=lvl3StickyMap.get(item.id);
+                    if(!info)return {};
                     const baseTop=hasL1?stickyHeaderH+(gIdx+1)*38:stickyHeaderH;
-                    return{position:'sticky',top:baseTop+(l2idx+1)*34,zIndex:90,background:isSel?'#dbeafe':'#f1f5f9',boxShadow:'0 1px 1px rgba(0,0,0,0.04)'};
+                    const top=baseTop+info.l2idx*34+38+info.l3idx*30;
+                    return{position:'sticky',top,zIndex:70-info.l3idx,background:isSel?'#dbeafe':'#f1f5f9',boxShadow:'0 1px 1px rgba(0,0,0,0.04)'};
                   })():{})
                 }}
                 onMouseEnter={e=>{if(!isSel&&!dragId)e.currentTarget.style.background=item.level===1?lc.bg:'#f8fafc'}}

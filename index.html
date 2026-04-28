@@ -499,6 +499,7 @@ function BudgetApp({session}){
   const [tweaksVisible,setTweaksVisible]=useState(false);
   const [expandedCats,setExpandedCats]=useState(new Set());
   const [stuckL2,setStuckL2]=useState(new Set());
+  const [stuckL3,setStuckL3]=useState(new Set());
   const [isMobile,setIsMobile]=useState(window.innerWidth<=700);
   const tableRef=useRef(null);
   const stickyTopRef=useRef(null);
@@ -756,26 +757,27 @@ function BudgetApp({session}){
     if(changed)setData(updated);
   },[subCalcs]);
 
-  // Sticky level-2 detection
+  // Sticky level-2 / level-3 detection — used to swap the chevron for a placeholder while
+  // the row is pinned at top so the spinning chevron doesn't visually flicker.
   useEffect(()=>{
     if(activeTab!=='budget')return;
-    const onScroll=()=>{
+    const findLastDesc=(it)=>{
+      if(!it.children||!it.children.length)return it;
+      const lastChildId=it.children[it.children.length-1];
+      const lastChild=dataMap.get(lastChildId);
+      if(!lastChild)return it;
+      if(collapsed.has(it.id))return it;
+      return findLastDesc(lastChild);
+    };
+    const checkStuck=(level)=>{
       const stuck=new Set();
-      document.querySelectorAll('[data-row-level="2"]').forEach(el=>{
+      document.querySelectorAll('[data-row-level="'+level+'"]').forEach(el=>{
         const id=el.getAttribute('data-row-id');
         const rect=el.getBoundingClientRect();
         const stickyTop=parseFloat(el.style.top)||0;
         if(Math.abs(rect.top-stickyTop)<3){
           const item=dataMap.get(id);
           if(item?.children?.length){
-            const findLastDesc=(it)=>{
-              if(!it.children||!it.children.length)return it;
-              const lastChildId=it.children[it.children.length-1];
-              const lastChild=dataMap.get(lastChildId);
-              if(!lastChild)return it;
-              if(collapsed.has(it.id))return it;
-              return findLastDesc(lastChild);
-            };
             const lastDesc=findLastDesc(item);
             const lastEl=document.querySelector('[data-row-id="'+lastDesc.id+'"]');
             if(lastEl){
@@ -785,10 +787,13 @@ function BudgetApp({session}){
           }
         }
       });
-      setStuckL2(prev=>{
-        if(prev.size===stuck.size&&[...prev].every(id=>stuck.has(id)))return prev;
-        return stuck;
-      });
+      return stuck;
+    };
+    const onScroll=()=>{
+      const s2=checkStuck(2);
+      const s3=checkStuck(3);
+      setStuckL2(prev=>{if(prev.size===s2.size&&[...prev].every(id=>s2.has(id)))return prev;return s2;});
+      setStuckL3(prev=>{if(prev.size===s3.size&&[...prev].every(id=>s3.has(id)))return prev;return s3;});
     };
     onScroll();
     window.addEventListener('scroll',onScroll,{passive:true});
@@ -1717,6 +1722,8 @@ function BudgetApp({session}){
             const indent=(item.level-1)*18;const hasSC=!!item.subCalcRef;const canAddChild=item.level<MAX_LEVEL;
             const showOwn=item.level>=2;
             const isL2Stuck=item.level===2&&stuckL2.has(item.id);
+            const isL3Stuck=item.level===3&&stuckL3.has(item.id);
+            const hideChevron=isL2Stuck||isL3Stuck;
             const effKat=getEffectiveKategori(item);
             const ownKat=item.kategori||'';
             const inherited=!ownKat&&effKat;
@@ -1774,7 +1781,7 @@ function BudgetApp({session}){
                 onMouseLeave={e=>{e.currentTarget.style.background=isSel?'#dbeafe':lc.bg}}>
                 <span style={{fontSize:10,color:'#94a3b8',fontFamily:'monospace'}}>{item.id}</span>
                 <div style={{display:'flex',alignItems:'center',paddingLeft:indent,gap:4,overflow:'hidden'}}>
-                  {hasKids&&!isL2Stuck?<button onClick={e=>{e.stopPropagation();toggleCollapse(item.id)}} style={{width:16,height:16,borderRadius:3,border:'none',background:'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:item.level===1?'#94a3b8':'#64748b',fontSize:9,transition:'transform .15s',transform:isCol?'rotate(-90deg)':'rotate(0)'}}>▼</button>
+                  {hasKids&&!hideChevron?<button onClick={e=>{e.stopPropagation();toggleCollapse(item.id)}} style={{width:16,height:16,borderRadius:3,border:'none',background:'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:item.level===1?'#94a3b8':'#64748b',fontSize:9,transition:'transform .15s',transform:isCol?'rotate(-90deg)':'rotate(0)'}}>▼</button>
                     :<span style={{width:16,flexShrink:0}}/>}
                   <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}><EditableCell id={item.id} field="desc" value={item.desc}/></span>
                   {item.link?<a href={item.link} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()} style={{color:tweaks.accentColor,fontSize:9,flexShrink:0}}>↗</a>:null}

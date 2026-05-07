@@ -499,7 +499,6 @@ function BudgetApp({session}){
   const [oversigtFilter,setOversigtFilter]=useState('all');
   const [kobView,setKobView]=useState('liste'); // 'liste' | 'galleri'
   const [subcalcFor,setSubcalcFor]=useState(null); // id of row whose subcalc picker is open
-  const [vareFor,setVareFor]=useState(null); // id of row whose vare picker is open
   const [editFaserOpen,setEditFaserOpen]=useState(false);
   const [dragId,setDragId]=useState(null);
   const [dragOver,setDragOver]=useState({id:null,side:null});
@@ -1170,7 +1169,19 @@ function BudgetApp({session}){
 
     const q=tmp.trim().toLowerCase();
     const matches=enableSuggest?(q?varer.filter(v=>(v.name||'').toLowerCase().includes(q)):varer).slice(0,8):[];
-    const commitText=()=>{updateItem(item.id,'desc',tmp);setEditingCell(null);};
+    // Commit free-text. If the row was linked to a vare and the typed name differs, unlink it.
+    const commitText=()=>{
+      if(item.varRef){
+        const linked=varer.find(x=>x.id===item.varRef);
+        if(!linked||linked.name!==tmp){
+          setData(prev=>prev.map(d=>d.id===item.id?{...d,desc:tmp,varRef:undefined}:d));
+          setEditingCell(null);
+          return;
+        }
+      }
+      updateItem(item.id,'desc',tmp);
+      setEditingCell(null);
+    };
     const pickVare=(v)=>{
       setData(prev=>prev.map(d=>d.id===item.id?{...d,desc:v.name,varRef:v.id,enhed:v.enhed||d.enhed}:d));
       setEditingCell(null);
@@ -1876,13 +1887,13 @@ function BudgetApp({session}){
                   <button onClick={e=>{e.stopPropagation();setEditingLink(item.id)}} title="Tilføj/rediger link" style={{width:14,height:14,border:'none',background:'transparent',cursor:'pointer',fontSize:9,color:item.link?tweaks.accentColor:'#cbd5e1',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>🔗</button>
                 </div>
                 <div style={{textAlign:'right'}}>{showOwn&&item.level>=3&&<EditableCell id={item.id} field="antal" value={item.antal} numeric align="right"/>}</div>
-                <div style={{fontSize:10}}>{showOwn&&item.level>=3&&<SelectCell id={item.id} field="enhed" value={item.enhed} options={UNITS}/>}</div>
+                <div style={{fontSize:10}}>{showOwn&&item.level>=3&&(item.varRef
+                  ?<span style={{color:tweaks.accentColor,fontSize:11}} title="Fra vare">{item.enhed||'—'}</span>
+                  :<SelectCell id={item.id} field="enhed" value={item.enhed} options={UNITS}/>)}</div>
                 <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4,minWidth:0}}>
                   {showOwn&&item.level>=3&&((hasSC||item.varRef)
                     ?<span style={{color:tweaks.accentColor,fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={hasSC?'Fra underberegning':'Fra vare'}>{fmt(item.pris)}</span>
                     :<div style={{flex:1,minWidth:0,display:'flex',alignItems:'center',justifyContent:'flex-end'}}><EditableCell id={item.id} field="pris" value={item.pris} numeric align="right"/></div>)}
-                  {showOwn&&item.level>=3&&!item.children?.length&&<button onClick={e=>{e.stopPropagation();setVareFor(item.id)}} title={item.varRef?'Vare valgt — klik for at ændre':'Vælg vare'}
-                    style={{width:16,height:16,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:item.varRef?tweaks.accentColor:'#cbd5e1',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>📦</button>}
                   {showOwn&&item.level>=3&&!item.children?.length&&<button onClick={e=>{e.stopPropagation();setSubcalcFor(item.id)}} title={hasSC?'Underberegning (klik for at ændre)':'Tilføj underberegning'}
                     style={{width:16,height:16,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:hasSC?tweaks.accentColor:'#cbd5e1',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>⚙</button>}
                 </div>
@@ -2325,53 +2336,6 @@ function BudgetApp({session}){
         );
       })()}
 
-      {vareFor&&dataMap.get(vareFor)&&(()=>{
-        const item=dataMap.get(vareFor);
-        const pickVare=(vid)=>{
-          if(!vid){
-            setData(prev=>prev.map(d=>d.id===vareFor?{...d,varRef:undefined}:d));
-            return;
-          }
-          const v=varer.find(x=>x.id===vid);
-          if(!v)return;
-          // Just set varRef + enhed; pris is now live-linked via the sync effect.
-          setData(prev=>prev.map(d=>d.id===vareFor?{...d,varRef:vid,enhed:v.enhed||d.enhed}:d));
-        };
-        return(
-          <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.3)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={()=>setVareFor(null)}>
-            <div style={{background:'white',borderRadius:12,padding:20,width:480,maxWidth:'100%',boxShadow:'0 8px 32px rgba(0,0,0,0.2)'}} onClick={e=>e.stopPropagation()}>
-              <div style={{marginBottom:14}}>
-                <div style={{fontSize:9,fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:3}}>Vælg vare for</div>
-                <div style={{fontSize:14,fontWeight:700,color:'#0f172a',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                  <span style={{fontFamily:'monospace',fontSize:11,color:'#94a3b8',marginRight:6,fontWeight:400}}>{item.id}</span>{item.desc}
-                </div>
-              </div>
-              {varer.length===0?(
-                <div style={{padding:'18px 12px',background:'#f8fafc',border:'1px dashed #e2e8f0',borderRadius:8,fontSize:12,color:'#64748b',marginBottom:12}}>
-                  Du har ingen varer endnu. Opret nogle på Varer-fanen først.
-                </div>
-              ):(
-                <select value={item.varRef||''} onChange={e=>pickVare(e.target.value||null)} autoFocus
-                  style={{width:'100%',padding:'9px 11px',border:'1px solid #cbd5e1',borderRadius:7,fontSize:13,fontFamily:'inherit',background:'white',marginBottom:12,cursor:'pointer',fontWeight:item.varRef?600:400,color:item.varRef?tweaks.accentColor:'#475569'}}>
-                  <option value="">— Ingen vare (manuel indtastning) —</option>
-                  {varer.map(v=>{const pu=calcVarePerUnit(v);return<option key={v.id} value={v.id}>{v.name} — {fmt2(pu)} kr/{v.enhed||'enhed'}</option>;})}
-                </select>
-              )}
-              {item.varRef&&(()=>{const v=varer.find(x=>x.id===item.varRef);if(!v)return null;
-                return(
-                  <div style={{padding:'10px 12px',background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:8,fontSize:11,color:'#075985',marginBottom:12}}>
-                    Pris og enhed er udfyldt fra <strong>{v.name}</strong>. Du kan stadig overskrive felterne manuelt på rækken.
-                  </div>
-                );
-              })()}
-              <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
-                {item.varRef&&<button onClick={()=>{setVareFor(null);setActiveTab('varer')}} style={{padding:'7px 12px',border:'1px solid '+tweaks.accentColor,background:'white',color:tweaks.accentColor,borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'inherit'}}>Rediger vare →</button>}
-                <button onClick={()=>setVareFor(null)} style={{padding:'7px 14px',border:'none',background:tweaks.accentColor,color:'white',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'inherit'}}>Færdig</button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
       {subcalcFor&&dataMap.get(subcalcFor)&&(()=>{
         const item=dataMap.get(subcalcFor);
         return(

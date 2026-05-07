@@ -157,12 +157,14 @@ function calcRest(item,dataMap,receiptSums){
   if(item.done)return 0;
   return calcSum(item,dataMap)-calcActual(item,dataMap,receiptSums);
 }
+// Convention: positive = saved (under budget), negative = overspent.
+// I.e. budget − faktisk, summed over done items.
 function calcDoneDeviation(item,dataMap,receiptSums){
   if(item.children&&item.children.length){
     return item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+calcDoneDeviation(c,dataMap,receiptSums):s;},0);
   }
   if(!item.done)return 0;
-  return calcActual(item,dataMap,receiptSums)-calcSum(item,dataMap);
+  return calcSum(item,dataMap)-calcActual(item,dataMap,receiptSums);
 }
 
 // Per-unit price for a vare. The "antal" on the budget row times this gives the total cost.
@@ -786,7 +788,7 @@ function BudgetApp({session}){
       const sumTracked=calcSumTracked(d,dataMap,receiptSums);
       const has=hasAnyActual(d,dataMap,receiptSums);
       // resterende = (budget - faktisk) for not-done items only.
-      // doneDev = sum of (actual - budget) over done items — the settled deviation.
+      // doneDev = sum of (budget - actual) over done items — positive = saved, negative = overspent.
       const rest=calcRest(d,dataMap,receiptSums);
       const doneDev=calcDoneDeviation(d,dataMap,receiptSums);
       // Whether any descendant (or self) is marked done.
@@ -1428,7 +1430,7 @@ function BudgetApp({session}){
   const doneLeaves=completableLeaves.filter(d=>d.done);
   const donePct=completableLeaves.length>0?Math.round((doneLeaves.length/completableLeaves.length)*100):0;
   // Settled deviation: actual − budget for items marked done
-  const doneDiff=doneLeaves.reduce((s,d)=>{const m=metricsById.get(d.id);return s+(m?m.actual-m.sum:0);},0);
+  const doneDiff=doneLeaves.reduce((s,d)=>{const m=metricsById.get(d.id);return s+(m?m.sum-m.actual:0);},0);
 
   const gridCols=isMobile?'40px 1fr 80px 30px':'52px 1.3fr 60px 48px 82px 92px 92px 72px 76px 100px 124px 32px';
   const selectedItem=selectedId?dataMap.get(selectedId):null;
@@ -1552,7 +1554,7 @@ function BudgetApp({session}){
             <p style={{color:'#64748b',fontSize:12,marginTop:1}}>
               Budget: <strong style={{color:'#0f172a',fontSize:isMobile?14:16}}>{fmt(totalSum)} kr</strong>
               {anyActual&&<span style={{marginLeft:10}}>Faktisk: <strong style={{color:'#0f172a',fontSize:isMobile?14:16}}>{fmt(totalActual)} kr</strong> <span style={{color:totalRest<0?'#dc2626':totalRest>0?'#16a34a':'#64748b',fontWeight:600}}>(rest {fmt(Math.round(totalRest))} kr)</span></span>}
-              {completableLeaves.length>0&&<span style={{marginLeft:10}}>Færdig: <strong style={{color:'#0f172a'}}>{doneLeaves.length}/{completableLeaves.length}</strong> <span style={{color:'#64748b'}}>({donePct}%)</span>{doneLeaves.length>0&&<span style={{marginLeft:6,color:doneDiff>0?'#dc2626':doneDiff<0?'#16a34a':'#64748b',fontWeight:600}}>· afsluttet afvigelse: {doneDiff===0?'0':(doneDiff>0?'+':'')+fmt(Math.round(doneDiff))} kr</span>}</span>}
+              {completableLeaves.length>0&&<span style={{marginLeft:10}}>Færdig: <strong style={{color:'#0f172a'}}>{doneLeaves.length}/{completableLeaves.length}</strong> <span style={{color:'#64748b'}}>({donePct}%)</span>{doneLeaves.length>0&&<span style={{marginLeft:6,color:doneDiff<0?'#dc2626':doneDiff>0?'#16a34a':'#64748b',fontWeight:600}}>· afsluttet afvigelse: {doneDiff===0?'0':(doneDiff>0?'+':'')+fmt(Math.round(doneDiff))} kr</span>}</span>}
             </p>
           </div>
           <div className="mobile-controls" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
@@ -2016,8 +2018,8 @@ function BudgetApp({session}){
                   title={hasActual?'Resterende: budget − faktisk (kun ikke-afsluttede)':'Endnu intet faktisk forbrug'}>
                   {fmt(Math.round(rest))}
                 </div>
-                <div style={{textAlign:'right',fontSize:item.level===1?12:10,fontWeight:600,color:item.level===1?(doneDev>0?'#fecaca':doneDev<0?'#bbf7d0':'rgba(255,255,255,.6)'):(doneDev>0?'#dc2626':doneDev<0?'#16a34a':'#cbd5e1')}}
-                  title={hasDone?'Afvigelse på afsluttede poster: faktisk − budget':'Markér posten afsluttet (✓) for at se settled afvigelse'}>
+                <div style={{textAlign:'right',fontSize:item.level===1?12:10,fontWeight:600,color:item.level===1?(doneDev<0?'#fecaca':doneDev>0?'#bbf7d0':'rgba(255,255,255,.6)'):(doneDev<0?'#dc2626':doneDev>0?'#16a34a':'#cbd5e1')}}
+                  title={hasDone?'Afvigelse på afsluttede poster: budget − faktisk (+ = sparet, − = overskredet)':'Markér posten afsluttet (✓) for at se settled afvigelse'}>
                   {hasDone?(doneDev===0?'✓':(doneDev>0?'+':'')+fmt(Math.round(doneDev))):<span style={{color:item.level===1?'rgba(255,255,255,.3)':'#e2e8f0'}}>—</span>}
                 </div>
                 <div style={{fontSize:10}}>

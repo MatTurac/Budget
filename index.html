@@ -1119,6 +1119,44 @@ function BudgetApp({session}){
     navigator.clipboard.writeText(header+'\n'+rows.join('\n')).then(()=>showToast('Kopieret'));
   };
 
+  // Tab-navigation between editable cells. Order per row:
+  //   desc → antal → enhed → pris → faktisk → next row's desc
+  // Skips fields that aren't editable for the row (e.g. enhed/pris when a vare is linked).
+  const editableFieldsFor=(it)=>{
+    if(!it)return [];
+    const fields=['desc'];
+    if(it.level>=3&&!it.children?.length){
+      fields.push('antal');
+      if(!it.varRef)fields.push('enhed');
+      if(!it.subCalcRef&&!it.varRef)fields.push('pris');
+    }
+    if(it.level>=3||!it.children?.length)fields.push('faktisk');
+    return fields;
+  };
+  const advanceCell=(curId,curField,backwards)=>{
+    const dir=backwards?-1:1;
+    const item=dataMap.get(curId);
+    if(!item)return;
+    const fields=editableFieldsFor(item);
+    const idx=fields.indexOf(curField);
+    const nextIdx=idx+dir;
+    if(nextIdx>=0&&nextIdx<fields.length){
+      setEditingCell({id:curId,field:fields[nextIdx]});
+      return;
+    }
+    const visible=data.filter(isVisible);
+    const curRowIdx=visible.findIndex(d=>d.id===curId);
+    for(let i=curRowIdx+dir;i>=0&&i<visible.length;i+=dir){
+      const next=visible[i];
+      const nf=editableFieldsFor(next);
+      if(nf.length>0){
+        setEditingCell({id:next.id,field:dir>0?nf[0]:nf[nf.length-1]});
+        return;
+      }
+    }
+    setEditingCell(null);
+  };
+
   const EditableCell=({id,field,value,numeric,align,decimals})=>{
     const isEd=editingCell?.id===id&&editingCell?.field===field;
     const[tmp,setTmp]=useState(String(value??''));
@@ -1135,7 +1173,17 @@ function BudgetApp({session}){
         updateItem(id,field,v);
         setEditingCell(null);
       }}
-      onKeyDown={e=>{if(e.key==='Enter')e.target.blur();if(e.key==='Escape')setEditingCell(null)}}
+      onKeyDown={e=>{
+        if(e.key==='Enter')e.target.blur();
+        else if(e.key==='Escape')setEditingCell(null);
+        else if(e.key==='Tab'){
+          e.preventDefault();
+          const trimmed=tmp.trim();
+          const v=numeric?(trimmed===''?null:parseDK(trimmed)):tmp;
+          updateItem(id,field,v);
+          advanceCell(id,field,e.shiftKey);
+        }
+      }}
       style={{width:'100%',border:'2px solid '+tweaks.accentColor,borderRadius:4,padding:'2px 6px',fontSize:'inherit',fontFamily:'inherit',textAlign:align||'left',outline:'none',background:'white'}}/>;
   };
 
@@ -1199,6 +1247,17 @@ function BudgetApp({session}){
             else if(e.key==='ArrowUp'&&matches.length){e.preventDefault();setHover(h=>Math.max(h-1,0));}
             else if(e.key==='Enter'){e.preventDefault();if(matches.length>0&&hover<matches.length)pickVare(matches[hover]);else commitText();}
             else if(e.key==='Escape'){e.preventDefault();setEditingCell(null);}
+            else if(e.key==='Tab'){
+              e.preventDefault();
+              // Save desc (and possibly unlink vare) before advancing
+              if(item.varRef){
+                const linked=varer.find(x=>x.id===item.varRef);
+                if(!linked||linked.name!==tmp){
+                  setData(prev=>prev.map(d=>d.id===item.id?{...d,desc:tmp,varRef:undefined}:d));
+                }else{updateItem(item.id,'desc',tmp);}
+              }else{updateItem(item.id,'desc',tmp);}
+              advanceCell(item.id,'desc',e.shiftKey);
+            }
           }}
           style={{width:'100%',border:'2px solid '+tweaks.accentColor,borderRadius:4,padding:'2px 6px',fontSize:'inherit',fontFamily:'inherit',outline:'none',background:'white'}}/>
         {enableSuggest&&pos&&matches.length>0&&(
@@ -1218,12 +1277,22 @@ function BudgetApp({session}){
     );
   };
 
-  const SelectCell=({id,field,value,options})=>(
-    <select value={value||''} onChange={e=>updateItem(id,field,e.target.value)} onClick={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()}
-      style={{border:'none',background:'transparent',fontSize:11,color:'#475569',fontFamily:'inherit',cursor:'pointer',width:'100%',outline:'none',padding:0,margin:0,height:18,lineHeight:'18px',appearance:'none',WebkitAppearance:'none',MozAppearance:'none',boxSizing:'border-box',maxWidth:'100%'}}>
-      {options.map(o=><option key={typeof o==='string'?o:o.value} value={typeof o==='string'?o:o.value}>{typeof o==='string'?(o||'—'):o.label}</option>)}
-    </select>
-  );
+  const SelectCell=({id,field,value,options})=>{
+    const ref=useRef(null);
+    const isEd=editingCell?.id===id&&editingCell?.field===field;
+    useEffect(()=>{if(isEd&&ref.current)ref.current.focus();},[isEd]);
+    return(
+      <select ref={ref} value={value||''} onChange={e=>updateItem(id,field,e.target.value)} onClick={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()}
+        onKeyDown={e=>{
+          if(e.key==='Tab'){e.preventDefault();advanceCell(id,field,e.shiftKey);}
+          else if(e.key==='Escape'){setEditingCell(null);ref.current&&ref.current.blur();}
+        }}
+        onBlur={()=>{if(isEd)setEditingCell(null);}}
+        style={{border:'none',background:'transparent',fontSize:11,color:'#475569',fontFamily:'inherit',cursor:'pointer',width:'100%',outline:'none',padding:0,margin:0,height:18,lineHeight:'18px',appearance:'none',WebkitAppearance:'none',MozAppearance:'none',boxSizing:'border-box',maxWidth:'100%'}}>
+        {options.map(o=><option key={typeof o==='string'?o:o.value} value={typeof o==='string'?o:o.value}>{typeof o==='string'?(o||'—'):o.label}</option>)}
+      </select>
+    );
+  };
 
   const levelColors={
     1:{bg:'#1e293b',color:'#fff',fw:700,fs:14},

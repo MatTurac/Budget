@@ -1183,7 +1183,10 @@ function BudgetApp({session}){
       setEditingCell(null);
     };
     const pickVare=(v)=>{
-      setData(prev=>prev.map(d=>d.id===item.id?{...d,desc:v.name,varRef:v.id,enhed:v.enhed||d.enhed}:d));
+      // Compute pris up front so the row updates immediately when switching vare —
+      // the live-sync effect only re-runs when the varer collection itself changes.
+      const newPris=Math.round(calcVarePerUnit(v)*100)/100;
+      setData(prev=>prev.map(d=>d.id===item.id?{...d,desc:v.name,varRef:v.id,enhed:v.enhed||d.enhed,pris:newPris}:d));
       setEditingCell(null);
     };
     return(

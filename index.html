@@ -129,20 +129,19 @@ function calcSum(item,dataMap){
   if(!item.children||!item.children.length)return own;
   return own+item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+calcSum(c,dataMap):s;},0);
 }
+// Faktisk is sourced exclusively from linked receipt lines (receiptSums) and rolled up the tree.
 function calcActual(item,dataMap,receiptSums){
   const rs=receiptSums?receiptSums.get(item.id)||0:0;
-  if(item.faktisk!=null&&item.faktisk!=='')return (Number(item.faktisk)||0)+rs;
   if(!item.children||!item.children.length)return rs;
   return rs+item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+calcActual(c,dataMap,receiptSums):s;},0);
 }
 function calcSumTracked(item,dataMap,receiptSums){
-  const hasOwn=(item.faktisk!=null&&item.faktisk!=='')||(receiptSums&&receiptSums.get(item.id));
+  const hasOwn=receiptSums&&receiptSums.get(item.id);
   if(hasOwn)return calcSum(item,dataMap);
   if(!item.children||!item.children.length)return 0;
   return item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+calcSumTracked(c,dataMap,receiptSums):s;},0);
 }
 function hasAnyActual(item,dataMap,receiptSums){
-  if(item.faktisk!=null&&item.faktisk!=='')return true;
   if(receiptSums&&receiptSums.get(item.id))return true;
   if(!item.children)return false;
   return item.children.some(cid=>{const c=dataMap.get(cid);return c&&hasAnyActual(c,dataMap,receiptSums);});
@@ -1166,7 +1165,7 @@ function BudgetApp({session}){
   };
 
   // Tab-navigation between editable cells. Order per row:
-  //   desc → antal → enhed → pris → faktisk → next row's desc
+  //   desc → antal → enhed → pris → next row's desc
   // Skips fields that aren't editable for the row (e.g. enhed/pris when a vare is linked).
   const editableFieldsFor=(it)=>{
     if(!it)return [];
@@ -1176,7 +1175,6 @@ function BudgetApp({session}){
       if(!it.varRef)fields.push('enhed');
       if(!it.subCalcRef&&!it.varRef)fields.push('pris');
     }
-    if(it.level>=3||!it.children?.length)fields.push('faktisk');
     return fields;
   };
   const advanceCell=(curId,curField,backwards)=>{
@@ -1512,10 +1510,8 @@ function BudgetApp({session}){
                 <div style={{background:'#f1f5f9',border:'1px dashed #cbd5e1',borderRadius:4,padding:'4px 6px',minHeight:26,fontWeight:600,color:'#64748b',cursor:'not-allowed'}}>{fmt(sum)}</div>
               </label>
               <label style={{display:'flex',flexDirection:'column',gap:2,fontSize:11}}>
-                <span style={{color:'#64748b',fontSize:9,fontWeight:600,textTransform:'uppercase'}}>Faktisk brugt</span>
-                <div style={{background:'white',border:'1px solid #e2e8f0',borderRadius:4,padding:'4px 6px',minHeight:26}}>
-                  {item.children?.length?<span style={{color:'#64748b'}}>{fmt(actual)}</span>:<EditableCell id={item.id} field="faktisk" value={item.faktisk} numeric/>}
-                </div>
+                <span style={{color:'#94a3b8',fontSize:9,fontWeight:600,textTransform:'uppercase',display:'flex',alignItems:'center',gap:3}}>Faktisk <span style={{fontSize:8,fontWeight:500,textTransform:'none',color:'#cbd5e1'}}>(fra køb)</span></span>
+                <div style={{background:'#f1f5f9',border:'1px dashed #cbd5e1',borderRadius:4,padding:'4px 6px',minHeight:26,fontWeight:600,color:'#64748b'}}>{actual>0?fmt(actual):'—'}</div>
               </label>
             </div>
             {hasActual&&(
@@ -1646,27 +1642,7 @@ function BudgetApp({session}){
             });
           });
         });
-        // Manual-faktisk entries have no store, so they're hidden when a store filter is active.
-        if(!storeFilter){
-          data.forEach(d=>{
-            if(d.children?.length)return;
-            if(d.faktisk==null||d.faktisk==='')return;
-            const amount=Number(d.faktisk)||0;
-            if(!amount)return;
-            allLines.push({
-              key:'f-'+d.id,
-              source:'manual-faktisk',
-              itemId:d.id,
-              store:'',
-              date:'',
-              desc:d.desc||'',
-              amount,
-              linkedId:d.id,
-              linkedDesc:d.desc||'',
-              created:0,
-            });
-          });
-        }
+        // (Manuel faktisk-indtastning er fjernet — alt faktisk kommer nu fra koblede kvitteringer.)
         allLines.sort((a,b)=>{
           if(a.date!==b.date)return (b.date||'').localeCompare(a.date||'');
           return (b.created||0)-(a.created||0);
@@ -2032,10 +2008,9 @@ function BudgetApp({session}){
                     style={{width:16,height:16,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:hasSC?tweaks.accentColor:'#cbd5e1',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>⚙</button>}
                 </div>
                 <div style={{textAlign:'right',fontWeight:item.level<=2?700:item.level===3?600:400,fontSize:item.level===1?14:item.level===2?13:12,color:item.level===1?'#fff':sum<0?'#059669':lc.color}}>{fmt(sum)}</div>
-                <div style={{textAlign:'right',fontSize:item.level===1?13:11,fontWeight:item.level<=2?700:400,color:item.level===1?'#fff':'#475569'}}>
-                  {(item.level<=2||(item.level>=2&&!item.children?.length))?(
-                    item.children?.length?<span style={{color:item.level===1?'rgba(255,255,255,.85)':'#64748b'}}>{fmt(actual)}</span>:<EditableCell id={item.id} field="faktisk" value={item.faktisk} numeric align="right"/>
-                  ):(item.level>=3?<EditableCell id={item.id} field="faktisk" value={item.faktisk} numeric align="right"/>:null)}
+                <div style={{textAlign:'right',fontSize:item.level===1?13:11,fontWeight:item.level<=2?700:400,color:item.level===1?'#fff':'#475569'}}
+                  title="Summen af koblede kvitterings-linjer">
+                  {actual>0?fmt(actual):<span style={{color:item.level===1?'rgba(255,255,255,.3)':'#cbd5e1'}}>—</span>}
                 </div>
                 <div style={{textAlign:'right',fontSize:item.level===1?12:10,fontWeight:600,color:item.level===1?(rest<0?'#fecaca':rest>0?'#bbf7d0':'rgba(255,255,255,.6)'):(rest<0?'#dc2626':rest>0?'#16a34a':'#cbd5e1')}}
                   title={hasActual?'Resterende: budget − faktisk (kun ikke-afsluttede)':'Endnu intet faktisk forbrug'}>

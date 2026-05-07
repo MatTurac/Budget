@@ -769,11 +769,12 @@ function BudgetApp({session}){
       const actual=calcActual(d,dataMap,receiptSums);
       const sumTracked=calcSumTracked(d,dataMap,receiptSums);
       const has=hasAnyActual(d,dataMap,receiptSums);
-      m.set(d.id,{sum,actual,sumTracked,hasActual:has,diff:actual-sumTracked});
+      // resterende = budget - faktisk (positive = budget left, negative = over)
+      m.set(d.id,{sum,actual,sumTracked,hasActual:has,diff:actual-sumTracked,rest:sum-actual});
     });
     return m;
   },[data,dataMap,receiptSums]);
-  const getM=id=>metricsById.get(id)||{sum:0,actual:0,sumTracked:0,hasActual:false,diff:0};
+  const getM=id=>metricsById.get(id)||{sum:0,actual:0,sumTracked:0,hasActual:false,diff:0,rest:0};
 
   const vareMap=useMemo(()=>{const m=new Map();varer.forEach(v=>m.set(v.id,v));return m},[varer]);
 
@@ -1391,6 +1392,7 @@ function BudgetApp({session}){
   const totalSumTracked=data.filter(d=>d.level===1).reduce((s,d)=>s+calcSumTracked(d,dataMap,receiptSums),0);
   const anyActual=data.filter(d=>d.level===1).some(d=>hasAnyActual(d,dataMap,receiptSums));
   const totalDiff=totalActual-totalSumTracked;
+  const totalRest=totalSum-totalActual;
 
   const gridCols=isMobile?'40px 1fr 80px 30px':'52px 1.3fr 60px 48px 82px 92px 92px 72px 100px 124px';
   const selectedItem=selectedId?dataMap.get(selectedId):null;
@@ -1415,7 +1417,7 @@ function BudgetApp({session}){
   };
 
   const MobileRow=({item})=>{
-    const {sum,actual,hasActual,diff}=getM(item.id);
+    const {sum,actual,hasActual,diff,rest}=getM(item.id);
     const lc=levelColors[item.level]||levelColors[5];
     const hasKids=item.children?.length>0;const isCol=collapsed.has(item.id);const isSel=selectedId===item.id;
     const indent=(item.level-1)*12;const effKat=getEffectiveKategori(item);
@@ -1433,7 +1435,7 @@ function BudgetApp({session}){
         {!isSel&&hasActual&&(
           <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:2,paddingLeft:26,fontSize:10}}>
             <span style={{color:item.level===1?'rgba(255,255,255,.75)':'#64748b'}}>Faktisk: <strong style={{color:item.level===1?'#fff':'#334155'}}>{fmt(actual)}</strong></span>
-            <span style={{fontWeight:600,color:item.level===1?(diff>0?'#fecaca':diff<0?'#bbf7d0':'rgba(255,255,255,.7)'):(diff>0?'#dc2626':diff<0?'#16a34a':'#64748b')}}>{diff===0?'✓':(diff>0?'+':'')+fmt(Math.round(diff))}</span>
+            <span style={{fontWeight:600,color:item.level===1?(rest<0?'#fecaca':rest>0?'#bbf7d0':'rgba(255,255,255,.7)'):(rest<0?'#dc2626':rest>0?'#16a34a':'#64748b')}}>Rest: {fmt(Math.round(rest))}</span>
           </div>
         )}
         {isSel&&(
@@ -1479,8 +1481,8 @@ function BudgetApp({session}){
               </label>
             </div>
             {hasActual&&(
-              <div style={{fontSize:11,padding:'4px 6px',borderRadius:4,background:diff>0?'#fef2f2':diff<0?'#f0fdf4':'#f8fafc',color:diff>0?'#dc2626':diff<0?'#16a34a':'#64748b',fontWeight:600,display:'flex',justifyContent:'space-between'}}>
-                <span>Afvigelse</span><span>{diff===0?'På budget ✓':(diff>0?'+':'')+fmt(Math.round(diff))+' kr'}</span>
+              <div style={{fontSize:11,padding:'4px 6px',borderRadius:4,background:rest<0?'#fef2f2':rest>0?'#f0fdf4':'#f8fafc',color:rest<0?'#dc2626':rest>0?'#16a34a':'#64748b',fontWeight:600,display:'flex',justifyContent:'space-between'}}>
+                <span>Resterende</span><span>{fmt(Math.round(rest))} kr</span>
               </div>
             )}
             {item.level>=2&&(
@@ -1515,7 +1517,7 @@ function BudgetApp({session}){
             <h1 style={{fontSize:isMobile?18:22,fontWeight:700,color:'#0f172a',letterSpacing:'-0.02em'}}>Projekt budget</h1>
             <p style={{color:'#64748b',fontSize:12,marginTop:1}}>
               Budget: <strong style={{color:'#0f172a',fontSize:isMobile?14:16}}>{fmt(totalSum)} kr</strong>
-              {anyActual&&<span style={{marginLeft:10}}>Faktisk: <strong style={{color:'#0f172a',fontSize:isMobile?14:16}}>{fmt(totalActual)} kr</strong> <span style={{color:totalDiff>0?'#dc2626':totalDiff<0?'#16a34a':'#64748b',fontWeight:600}}>({totalDiff===0?'på budget':(totalDiff>0?'+':'')+fmt(Math.round(totalDiff))+' kr'})</span></span>}
+              {anyActual&&<span style={{marginLeft:10}}>Faktisk: <strong style={{color:'#0f172a',fontSize:isMobile?14:16}}>{fmt(totalActual)} kr</strong> <span style={{color:totalRest<0?'#dc2626':totalRest>0?'#16a34a':'#64748b',fontWeight:600}}>(rest {fmt(Math.round(totalRest))} kr)</span></span>}
             </p>
           </div>
           <div className="mobile-controls" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
@@ -1575,7 +1577,7 @@ function BudgetApp({session}){
               })()}
             </div>
             {!isMobile&&<div style={{display:'grid',gridTemplateColumns:gridCols,padding:'7px 10px',background:'#1e293b',color:'#cbd5e1',fontSize:10,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',gap:'0 12px'}}>
-              <span>Kode</span><span>Beskrivelse</span><span style={{textAlign:'right'}}>Antal</span><span>Enhed</span><span style={{textAlign:'right'}}>Enhedspris</span><span style={{textAlign:'right'}}>Budget</span><span style={{textAlign:'right'}}>Faktisk</span><span style={{textAlign:'right'}}>Afvigelse</span><span>Kategori</span><span/>
+              <span>Kode</span><span>Beskrivelse</span><span style={{textAlign:'right'}}>Antal</span><span>Enhed</span><span style={{textAlign:'right'}}>Enhedspris</span><span style={{textAlign:'right'}}>Budget</span><span style={{textAlign:'right'}}>Faktisk</span><span style={{textAlign:'right'}}>Rest</span><span>Kategori</span><span/>
             </div>}
           </div>
         )}
@@ -1908,7 +1910,7 @@ function BudgetApp({session}){
               else{cur={l1:null,l1Idx:0,rest:[it]};groups.push(cur);}
             });
             const renderRow=(item,gIdx,hasL1)=>{
-            const {sum,actual,hasActual,diff}=getM(item.id);
+            const {sum,actual,hasActual,diff,rest}=getM(item.id);
             const lc=levelColors[item.level]||levelColors[5];
             const hasKids=item.children?.length>0;const isCol=collapsed.has(item.id);const isSel=selectedId===item.id;
             const indent=(item.level-1)*18;const hasSC=!!item.subCalcRef;const canAddChild=item.level<MAX_LEVEL;
@@ -1996,8 +1998,9 @@ function BudgetApp({session}){
                     item.children?.length?<span style={{color:item.level===1?'rgba(255,255,255,.85)':'#64748b'}}>{fmt(actual)}</span>:<EditableCell id={item.id} field="faktisk" value={item.faktisk} numeric align="right"/>
                   ):(item.level>=3?<EditableCell id={item.id} field="faktisk" value={item.faktisk} numeric align="right"/>:null)}
                 </div>
-                <div style={{textAlign:'right',fontSize:item.level===1?12:10,fontWeight:600,color:item.level===1?(diff>0?'#fecaca':diff<0?'#bbf7d0':'rgba(255,255,255,.6)'):(diff>0?'#dc2626':diff<0?'#16a34a':'#cbd5e1')}}>
-                  {hasActual?(diff===0?'✓':(diff>0?'+':'')+fmt(Math.round(diff))):<span style={{color:item.level===1?'rgba(255,255,255,.3)':'#e2e8f0'}}>—</span>}
+                <div style={{textAlign:'right',fontSize:item.level===1?12:10,fontWeight:600,color:item.level===1?(rest<0?'#fecaca':rest>0?'#bbf7d0':'rgba(255,255,255,.6)'):(rest<0?'#dc2626':rest>0?'#16a34a':'#cbd5e1')}}
+                  title={hasActual?'Resterende: budget − faktisk':'Endnu intet faktisk forbrug'}>
+                  {fmt(Math.round(rest))}
                 </div>
                 <div style={{fontSize:10}}>
                   {showOwn&&<SelectCell id={item.id} field="kategori" value={ownKat} options={catOptions}/>}

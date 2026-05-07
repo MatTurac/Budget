@@ -905,6 +905,7 @@ function BudgetApp({session}){
   },[data,lvl2StickyMap,detailLevel,collapsed]);
 
   const updateItem=(id,field,value)=>setData(p=>p.map(d=>d.id===id?{...d,[field]:value}:d));
+  const toggleDone=(id)=>setData(p=>p.map(d=>d.id===id?{...d,done:!d.done}:d));
 
   const addChild=parentId=>{
     const parent=dataMap.get(parentId);if(!parent||parent.level>=MAX_LEVEL)return;
@@ -1393,6 +1394,12 @@ function BudgetApp({session}){
   const anyActual=data.filter(d=>d.level===1).some(d=>hasAnyActual(d,dataMap,receiptSums));
   const totalDiff=totalActual-totalSumTracked;
   const totalRest=totalSum-totalActual;
+  // Completion stats: count leaf items at level 2+ that have a "done" flag
+  const completableLeaves=data.filter(d=>d.level>=2&&!d.children?.length);
+  const doneLeaves=completableLeaves.filter(d=>d.done);
+  const donePct=completableLeaves.length>0?Math.round((doneLeaves.length/completableLeaves.length)*100):0;
+  // Settled deviation: actual − budget for items marked done
+  const doneDiff=doneLeaves.reduce((s,d)=>{const m=metricsById.get(d.id);return s+(m?m.actual-m.sum:0);},0);
 
   const gridCols=isMobile?'40px 1fr 80px 30px':'52px 1.3fr 60px 48px 82px 92px 92px 72px 100px 124px';
   const selectedItem=selectedId?dataMap.get(selectedId):null;
@@ -1518,6 +1525,7 @@ function BudgetApp({session}){
             <p style={{color:'#64748b',fontSize:12,marginTop:1}}>
               Budget: <strong style={{color:'#0f172a',fontSize:isMobile?14:16}}>{fmt(totalSum)} kr</strong>
               {anyActual&&<span style={{marginLeft:10}}>Faktisk: <strong style={{color:'#0f172a',fontSize:isMobile?14:16}}>{fmt(totalActual)} kr</strong> <span style={{color:totalRest<0?'#dc2626':totalRest>0?'#16a34a':'#64748b',fontWeight:600}}>(rest {fmt(Math.round(totalRest))} kr)</span></span>}
+              {completableLeaves.length>0&&<span style={{marginLeft:10}}>Færdig: <strong style={{color:'#0f172a'}}>{doneLeaves.length}/{completableLeaves.length}</strong> <span style={{color:'#64748b'}}>({donePct}%)</span>{doneLeaves.length>0&&<span style={{marginLeft:6,color:doneDiff>0?'#dc2626':doneDiff<0?'#16a34a':'#64748b',fontWeight:600}}>· afsluttet afvigelse: {doneDiff===0?'0':(doneDiff>0?'+':'')+fmt(Math.round(doneDiff))} kr</span>}</span>}
             </p>
           </div>
           <div className="mobile-controls" style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
@@ -1976,8 +1984,12 @@ function BudgetApp({session}){
                 <span style={{fontSize:10,color:'#94a3b8',fontFamily:'monospace'}}>{item.id}</span>
                 <div style={{display:'flex',alignItems:'center',paddingLeft:indent,gap:4,overflow:'hidden'}}>
                   {hasKids&&!hideChevron?<button onClick={e=>{e.stopPropagation();toggleCollapse(item.id)}} style={{width:16,height:16,borderRadius:3,border:'none',background:'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:item.level===1?'#94a3b8':'#64748b',fontSize:9,transition:'transform .15s',transform:isCol?'rotate(-90deg)':'rotate(0)'}}>▼</button>
-                    :<span style={{width:16,flexShrink:0}}/>}
-                  <span style={{flex:1,minWidth:0,position:'relative'}}><DescCell item={item}/></span>
+                    :!item.children?.length&&item.level>=2
+                      ?<button onClick={e=>{e.stopPropagation();toggleDone(item.id)}}
+                        title={item.done?'Markér som ikke afsluttet':'Markér som afsluttet'}
+                        style={{width:16,height:16,borderRadius:3,border:'1px solid '+(item.done?'#16a34a':'#cbd5e1'),background:item.done?'#16a34a':'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:'white',fontSize:10,padding:0,fontWeight:700,lineHeight:1}}>{item.done?'✓':''}</button>
+                      :<span style={{width:16,flexShrink:0}}/>}
+                  <span style={{flex:1,minWidth:0,position:'relative',textDecoration:item.done?'line-through':'none',opacity:item.done?0.65:1}}><DescCell item={item}/></span>
                   {item.link?<a href={item.link} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()} style={{color:tweaks.accentColor,fontSize:9,flexShrink:0}}>↗</a>:null}
                   <button onClick={e=>{e.stopPropagation();setEditingLink(item.id)}} title="Tilføj/rediger link" style={{width:14,height:14,border:'none',background:'transparent',cursor:'pointer',fontSize:9,color:item.link?tweaks.accentColor:'#cbd5e1',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>🔗</button>
                 </div>

@@ -790,7 +790,9 @@ function BudgetApp({session}){
       // doneDev = sum of (actual - budget) over done items — the settled deviation.
       const rest=calcRest(d,dataMap,receiptSums);
       const doneDev=calcDoneDeviation(d,dataMap,receiptSums);
-      m.set(d.id,{sum,actual,sumTracked,hasActual:has,diff:actual-sumTracked,rest,doneDev});
+      // Whether any descendant (or self) is marked done.
+      const hasDone=(function check(it){if(it.done)return true;if(!it.children)return false;return it.children.some(cid=>{const c=dataMap.get(cid);return c&&check(c);});})(d);
+      m.set(d.id,{sum,actual,sumTracked,hasActual:has,diff:actual-sumTracked,rest,doneDev,hasDone});
     });
     return m;
   },[data,dataMap,receiptSums]);
@@ -1430,7 +1432,7 @@ function BudgetApp({session}){
   // Settled deviation: actual − budget for items marked done
   const doneDiff=doneLeaves.reduce((s,d)=>{const m=metricsById.get(d.id);return s+(m?m.actual-m.sum:0);},0);
 
-  const gridCols=isMobile?'40px 1fr 80px 30px':'52px 1.3fr 60px 48px 82px 92px 92px 72px 100px 124px 32px';
+  const gridCols=isMobile?'40px 1fr 80px 30px':'52px 1.3fr 60px 48px 82px 92px 92px 72px 76px 100px 124px 32px';
   const selectedItem=selectedId?dataMap.get(selectedId):null;
 
   const LinkEditor=({item})=>{
@@ -1453,7 +1455,7 @@ function BudgetApp({session}){
   };
 
   const MobileRow=({item})=>{
-    const {sum,actual,hasActual,diff,rest}=getM(item.id);
+    const {sum,actual,hasActual,diff,rest,doneDev,hasDone}=getM(item.id);
     const lc=levelColors[item.level]||levelColors[5];
     const hasKids=item.children?.length>0;const isCol=collapsed.has(item.id);const isSel=selectedId===item.id;
     const indent=(item.level-1)*12;const effKat=getEffectiveKategori(item);
@@ -1614,7 +1616,7 @@ function BudgetApp({session}){
               })()}
             </div>
             {!isMobile&&<div style={{display:'grid',gridTemplateColumns:gridCols,padding:'7px 10px',background:'#1e293b',color:'#cbd5e1',fontSize:10,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',gap:'0 12px'}}>
-              <span>Kode</span><span>Beskrivelse</span><span style={{textAlign:'right'}}>Antal</span><span>Enhed</span><span style={{textAlign:'right'}}>Enhedspris</span><span style={{textAlign:'right'}}>Budget</span><span style={{textAlign:'right'}}>Faktisk</span><span style={{textAlign:'right'}}>Rest</span><span>Kategori</span><span/><span style={{textAlign:'center'}}>✓</span>
+              <span>Kode</span><span>Beskrivelse</span><span style={{textAlign:'right'}}>Antal</span><span>Enhed</span><span style={{textAlign:'right'}}>Enhedspris</span><span style={{textAlign:'right'}}>Budget</span><span style={{textAlign:'right'}}>Faktisk</span><span style={{textAlign:'right'}}>Rest</span><span style={{textAlign:'right'}}>Afvigelse</span><span>Kategori</span><span/><span style={{textAlign:'center'}}>✓</span>
             </div>}
           </div>
         )}
@@ -1947,7 +1949,7 @@ function BudgetApp({session}){
               else{cur={l1:null,l1Idx:0,rest:[it]};groups.push(cur);}
             });
             const renderRow=(item,gIdx,hasL1)=>{
-            const {sum,actual,hasActual,diff,rest}=getM(item.id);
+            const {sum,actual,hasActual,diff,rest,doneDev,hasDone}=getM(item.id);
             const lc=levelColors[item.level]||levelColors[5];
             const hasKids=item.children?.length>0;const isCol=collapsed.has(item.id);const isSel=selectedId===item.id;
             const indent=(item.level-1)*18;const hasSC=!!item.subCalcRef;const canAddChild=item.level<MAX_LEVEL;
@@ -2036,8 +2038,12 @@ function BudgetApp({session}){
                   ):(item.level>=3?<EditableCell id={item.id} field="faktisk" value={item.faktisk} numeric align="right"/>:null)}
                 </div>
                 <div style={{textAlign:'right',fontSize:item.level===1?12:10,fontWeight:600,color:item.level===1?(rest<0?'#fecaca':rest>0?'#bbf7d0':'rgba(255,255,255,.6)'):(rest<0?'#dc2626':rest>0?'#16a34a':'#cbd5e1')}}
-                  title={hasActual?'Resterende: budget − faktisk':'Endnu intet faktisk forbrug'}>
+                  title={hasActual?'Resterende: budget − faktisk (kun ikke-afsluttede)':'Endnu intet faktisk forbrug'}>
                   {fmt(Math.round(rest))}
+                </div>
+                <div style={{textAlign:'right',fontSize:item.level===1?12:10,fontWeight:600,color:item.level===1?(doneDev>0?'#fecaca':doneDev<0?'#bbf7d0':'rgba(255,255,255,.6)'):(doneDev>0?'#dc2626':doneDev<0?'#16a34a':'#cbd5e1')}}
+                  title={hasDone?'Afvigelse på afsluttede poster: faktisk − budget':'Markér posten afsluttet (✓) for at se settled afvigelse'}>
+                  {hasDone?(doneDev===0?'✓':(doneDev>0?'+':'')+fmt(Math.round(doneDev))):<span style={{color:item.level===1?'rgba(255,255,255,.3)':'#e2e8f0'}}>—</span>}
                 </div>
                 <div style={{fontSize:10}}>
                   {showOwn&&<SelectCell id={item.id} field="kategori" value={ownKat} options={catOptions}/>}

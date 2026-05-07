@@ -763,16 +763,20 @@ function BudgetApp({session}){
   },[data,dataMap,receiptSums]);
   const getM=id=>metricsById.get(id)||{sum:0,actual:0,sumTracked:0,hasActual:false,diff:0};
 
-  // Sync subCalc prices into budget rows
+  const vareMap=useMemo(()=>{const m=new Map();varer.forEach(v=>m.set(v.id,v));return m},[varer]);
+
+  // Sync subCalc + vare prices into budget rows. Live-linked — when the source changes, the
+  // row's pris (and enhed for varer) updates automatically.
   useEffect(()=>{
     if(!hydratedRef.current)return;
     let changed=false;
     const updated=data.map(d=>{
       if(d.subCalcRef){const sc=subCalcMap.get(d.subCalcRef);if(sc){const np=Math.round(calcSCT(sc));if(d.pris!==np){changed=true;return{...d,pris:np}}}}
+      if(d.varRef){const v=vareMap.get(d.varRef);if(v){const np=Math.round(calcVarePerUnit(v)*100)/100;const ne=v.enhed||d.enhed;if(d.pris!==np||d.enhed!==ne){changed=true;return{...d,pris:np,enhed:ne};}}}
       return d;
     });
     if(changed)setData(updated);
-  },[subCalcs]);
+  },[subCalcs,varer]);
 
   // Sticky level-2 / level-3 detection — used to swap the chevron for a placeholder while
   // the row is pinned at top so the spinning chevron doesn't visually flicker.
@@ -1134,6 +1138,70 @@ function BudgetApp({session}){
       }}
       onKeyDown={e=>{if(e.key==='Enter')e.target.blur();if(e.key==='Escape')setEditingCell(null)}}
       style={{width:'100%',border:'2px solid '+tweaks.accentColor,borderRadius:4,padding:'2px 6px',fontSize:'inherit',fontFamily:'inherit',textAlign:align||'left',outline:'none',background:'white'}}/>;
+  };
+
+  // Description cell with vare suggestions: leaf rows (level >= 3, no children) show a
+  // dropdown of varer that match the typed text. Picking one fills desc + links the vare;
+  // pressing Enter / blurring without picking saves as plain text.
+  const DescCell=({item})=>{
+    const isEd=editingCell?.id===item.id&&editingCell?.field==='desc';
+    const[tmp,setTmp]=useState(String(item.desc||''));
+    const[hover,setHover]=useState(0);
+    const[pos,setPos]=useState(null);
+    const inputRef=useRef(null);
+    useEffect(()=>{setTmp(String(item.desc||''))},[item.desc]);
+    const enableSuggest=item.level>=3&&!item.children?.length&&varer.length>0;
+    useLayoutEffect(()=>{
+      if(!isEd||!enableSuggest){setPos(null);return;}
+      const update=()=>{
+        if(!inputRef.current)return;
+        const r=inputRef.current.getBoundingClientRect();
+        const desiredW=Math.max(r.width,260);
+        setPos({left:Math.min(r.left,window.innerWidth-desiredW-8),top:r.bottom+2,width:desiredW});
+      };
+      update();
+      window.addEventListener('scroll',update,true);
+      window.addEventListener('resize',update);
+      return()=>{window.removeEventListener('scroll',update,true);window.removeEventListener('resize',update);};
+    },[isEd,enableSuggest]);
+
+    if(!isEd)return<div onClick={e=>{e.stopPropagation();setEditingCell({id:item.id,field:'desc'});setTmp(String(item.desc||''))}}
+      style={{cursor:'text',display:'flex',alignItems:'center',width:'100%',minHeight:20,height:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.desc||''}</div>;
+
+    const q=tmp.trim().toLowerCase();
+    const matches=enableSuggest?(q?varer.filter(v=>(v.name||'').toLowerCase().includes(q)):varer).slice(0,8):[];
+    const commitText=()=>{updateItem(item.id,'desc',tmp);setEditingCell(null);};
+    const pickVare=(v)=>{
+      setData(prev=>prev.map(d=>d.id===item.id?{...d,desc:v.name,varRef:v.id,enhed:v.enhed||d.enhed}:d));
+      setEditingCell(null);
+    };
+    return(
+      <>
+        <input ref={inputRef} autoFocus value={tmp}
+          onChange={e=>{setTmp(e.target.value);setHover(0);}}
+          onBlur={()=>setTimeout(()=>{if(editingCell?.id===item.id&&editingCell?.field==='desc')commitText();},200)}
+          onKeyDown={e=>{
+            if(e.key==='ArrowDown'&&matches.length){e.preventDefault();setHover(h=>Math.min(h+1,matches.length-1));}
+            else if(e.key==='ArrowUp'&&matches.length){e.preventDefault();setHover(h=>Math.max(h-1,0));}
+            else if(e.key==='Enter'){e.preventDefault();if(matches.length>0&&hover<matches.length)pickVare(matches[hover]);else commitText();}
+            else if(e.key==='Escape'){e.preventDefault();setEditingCell(null);}
+          }}
+          style={{width:'100%',border:'2px solid '+tweaks.accentColor,borderRadius:4,padding:'2px 6px',fontSize:'inherit',fontFamily:'inherit',outline:'none',background:'white'}}/>
+        {enableSuggest&&pos&&matches.length>0&&(
+          <div style={{position:'fixed',left:pos.left,top:pos.top,width:pos.width,background:'white',border:'1px solid #e2e8f0',borderRadius:6,boxShadow:'0 8px 24px rgba(0,0,0,0.14)',maxHeight:240,overflowY:'auto',zIndex:9999}}>
+            {matches.map((v,i)=>(
+              <div key={v.id}
+                onMouseDown={e=>{e.preventDefault();pickVare(v);}}
+                onMouseEnter={()=>setHover(i)}
+                style={{padding:'6px 10px',cursor:'pointer',background:hover===i?'#eff6ff':'white',borderBottom:i<matches.length-1?'1px solid #f8fafc':'none'}}>
+                <div style={{fontSize:12,fontWeight:600,color:'#0f172a'}}>{v.name}</div>
+                <div style={{fontSize:10,color:'#64748b'}}>{fmt2(calcVarePerUnit(v))} kr/{v.enhed||'enhed'}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </>
+    );
   };
 
   const SelectCell=({id,field,value,options})=>(
@@ -1803,15 +1871,15 @@ function BudgetApp({session}){
                 <div style={{display:'flex',alignItems:'center',paddingLeft:indent,gap:4,overflow:'hidden'}}>
                   {hasKids&&!hideChevron?<button onClick={e=>{e.stopPropagation();toggleCollapse(item.id)}} style={{width:16,height:16,borderRadius:3,border:'none',background:'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:item.level===1?'#94a3b8':'#64748b',fontSize:9,transition:'transform .15s',transform:isCol?'rotate(-90deg)':'rotate(0)'}}>▼</button>
                     :<span style={{width:16,flexShrink:0}}/>}
-                  <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}><EditableCell id={item.id} field="desc" value={item.desc}/></span>
+                  <span style={{flex:1,minWidth:0,position:'relative'}}><DescCell item={item}/></span>
                   {item.link?<a href={item.link} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()} style={{color:tweaks.accentColor,fontSize:9,flexShrink:0}}>↗</a>:null}
                   <button onClick={e=>{e.stopPropagation();setEditingLink(item.id)}} title="Tilføj/rediger link" style={{width:14,height:14,border:'none',background:'transparent',cursor:'pointer',fontSize:9,color:item.link?tweaks.accentColor:'#cbd5e1',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>🔗</button>
                 </div>
                 <div style={{textAlign:'right'}}>{showOwn&&item.level>=3&&<EditableCell id={item.id} field="antal" value={item.antal} numeric align="right"/>}</div>
                 <div style={{fontSize:10}}>{showOwn&&item.level>=3&&<SelectCell id={item.id} field="enhed" value={item.enhed} options={UNITS}/>}</div>
                 <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:4,minWidth:0}}>
-                  {showOwn&&item.level>=3&&(hasSC
-                    ?<span style={{color:tweaks.accentColor,fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title="Fra underberegning">{fmt(item.pris)}</span>
+                  {showOwn&&item.level>=3&&((hasSC||item.varRef)
+                    ?<span style={{color:tweaks.accentColor,fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={hasSC?'Fra underberegning':'Fra vare'}>{fmt(item.pris)}</span>
                     :<div style={{flex:1,minWidth:0,display:'flex',alignItems:'center',justifyContent:'flex-end'}}><EditableCell id={item.id} field="pris" value={item.pris} numeric align="right"/></div>)}
                   {showOwn&&item.level>=3&&!item.children?.length&&<button onClick={e=>{e.stopPropagation();setVareFor(item.id)}} title={item.varRef?'Vare valgt — klik for at ændre':'Vælg vare'}
                     style={{width:16,height:16,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:item.varRef?tweaks.accentColor:'#cbd5e1',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>📦</button>}
@@ -1953,7 +2021,7 @@ function BudgetApp({session}){
               <h2 style={{fontSize:17,fontWeight:700,color:'#0f172a'}}>Varer</h2>
               <p style={{fontSize:12,color:'#64748b',marginTop:2}}>Gem materialer/varer her, så du kan vælge dem under budgetlinjer.</p>
             </div>
-            <button onClick={()=>setVarer(p=>[...p,{id:'v'+Date.now(),name:'Ny vare',enhederPerVare:1,pris:0,forbrugPerEnhed:1,hoejde:'',faktor:'',enhed:'stk'}])}
+            <button onClick={()=>setVarer(p=>[...p,{id:'v'+Date.now(),name:'Ny vare',enhederPerVare:1,enhederLabel:'',pris:0,forbrugPerEnhed:1,forbrugLabel:'',hoejde:'',hoejdeLabel:'m',faktor:'',faktorLabel:'',enhed:'stk'}])}
               style={{padding:'7px 14px',borderRadius:7,border:'none',background:tweaks.accentColor,color:'white',cursor:'pointer',fontSize:12,fontWeight:600,fontFamily:'DM Sans'}}>+ Ny vare</button>
           </div>
           {varer.length===0?(
@@ -1977,40 +2045,56 @@ function BudgetApp({session}){
                       <button onClick={()=>{if(confirm('Slet "'+v.name+'"?'))setVarer(p=>p.filter((_,i)=>i!==vIdx))}}
                         style={{border:'1px solid #fecaca',background:'white',color:'#dc2626',cursor:'pointer',fontSize:11,padding:'4px 10px',borderRadius:5,fontFamily:'inherit'}}>Slet</button>
                     </div>
-                    <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'repeat(4,1fr)',gap:8}}>
+                    <div style={{display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(2,1fr)',gap:10}}>
                       <label style={{display:'flex',flexDirection:'column',gap:3,fontSize:11}}>
-                        <span style={{color:'#64748b',fontSize:10,fontWeight:600,textTransform:'uppercase'}}>Enhed</span>
+                        <span style={{color:'#64748b',fontSize:10,fontWeight:600,textTransform:'uppercase'}}>Enhed (under budget)</span>
                         <select value={v.enhed||''} onChange={e=>update('enhed',e.target.value)}
                           style={{padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',background:'white'}}>
                           {UNITS.map(u=><option key={u} value={u}>{u||'—'}</option>)}
                         </select>
                       </label>
                       <label style={{display:'flex',flexDirection:'column',gap:3,fontSize:11}}>
-                        <span style={{color:'#64748b',fontSize:10,fontWeight:600,textTransform:'uppercase'}}>Antal pr. vare</span>
-                        <input type="number" step="any" value={v.enhederPerVare} onChange={e=>update('enhederPerVare',parseFloat(e.target.value)||0)}
-                          style={{padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
-                      </label>
-                      <label style={{display:'flex',flexDirection:'column',gap:3,fontSize:11}}>
-                        <span style={{color:'#64748b',fontSize:10,fontWeight:600,textTransform:'uppercase'}}>Pris pr. vare</span>
+                        <span style={{color:'#64748b',fontSize:10,fontWeight:600,textTransform:'uppercase'}}>Pris pr. vare (kr)</span>
                         <input type="number" step="any" value={v.pris} onChange={e=>update('pris',parseFloat(e.target.value)||0)}
                           style={{padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none',textAlign:'right'}}/>
                       </label>
                       <label style={{display:'flex',flexDirection:'column',gap:3,fontSize:11}}>
+                        <span style={{color:'#64748b',fontSize:10,fontWeight:600,textTransform:'uppercase'}}>Antal enheder pr. vare</span>
+                        <div style={{display:'flex',gap:4}}>
+                          <input type="number" step="any" value={v.enhederPerVare} onChange={e=>update('enhederPerVare',parseFloat(e.target.value)||0)}
+                            style={{width:90,padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
+                          <input type="text" value={v.enhederLabel||''} onChange={e=>update('enhederLabel',e.target.value)} placeholder="fx m² pr rulle"
+                            style={{flex:1,padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none',color:'#64748b'}}/>
+                        </div>
+                      </label>
+                      <label style={{display:'flex',flexDirection:'column',gap:3,fontSize:11}}>
                         <span style={{color:'#64748b',fontSize:10,fontWeight:600,textTransform:'uppercase'}}>Forbrug pr. enhed</span>
-                        <input type="number" step="any" value={v.forbrugPerEnhed} onChange={e=>update('forbrugPerEnhed',parseFloat(e.target.value)||0)}
-                          style={{padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
+                        <div style={{display:'flex',gap:4}}>
+                          <input type="number" step="any" value={v.forbrugPerEnhed} onChange={e=>update('forbrugPerEnhed',parseFloat(e.target.value)||0)}
+                            style={{width:90,padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
+                          <input type="text" value={v.forbrugLabel||''} onChange={e=>update('forbrugLabel',e.target.value)} placeholder="fx kg pr m² pr mm"
+                            style={{flex:1,padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none',color:'#64748b'}}/>
+                        </div>
                       </label>
                       {v.enhed==='lbm'&&(
                         <label style={{display:'flex',flexDirection:'column',gap:3,fontSize:11}}>
-                          <span style={{color:'#64748b',fontSize:10,fontWeight:600,textTransform:'uppercase'}}>Højde (m)</span>
-                          <input type="number" step="any" value={v.hoejde} onChange={e=>update('hoejde',e.target.value)} placeholder="(valgfri)"
-                            style={{padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
+                          <span style={{color:'#64748b',fontSize:10,fontWeight:600,textTransform:'uppercase'}}>Højde (valgfri, indgår i lbm-beregning)</span>
+                          <div style={{display:'flex',gap:4}}>
+                            <input type="number" step="any" value={v.hoejde} onChange={e=>update('hoejde',e.target.value)} placeholder=""
+                              style={{width:90,padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
+                            <input type="text" value={v.hoejdeLabel||''} onChange={e=>update('hoejdeLabel',e.target.value)} placeholder="fx m"
+                              style={{flex:1,padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none',color:'#64748b'}}/>
+                          </div>
                         </label>
                       )}
                       <label style={{display:'flex',flexDirection:'column',gap:3,fontSize:11}}>
-                        <span style={{color:'#64748b',fontSize:10,fontWeight:600,textTransform:'uppercase'}}>Faktor</span>
-                        <input type="number" step="any" value={v.faktor} onChange={e=>update('faktor',e.target.value)} placeholder="(valgfri, fx tykkelse)"
-                          style={{padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
+                        <span style={{color:'#64748b',fontSize:10,fontWeight:600,textTransform:'uppercase'}}>Faktor (valgfri)</span>
+                        <div style={{display:'flex',gap:4}}>
+                          <input type="number" step="any" value={v.faktor} onChange={e=>update('faktor',e.target.value)} placeholder=""
+                            style={{width:90,padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none'}}/>
+                          <input type="text" value={v.faktorLabel||''} onChange={e=>update('faktorLabel',e.target.value)} placeholder="fx mm tykkelse"
+                            style={{flex:1,padding:'5px 7px',border:'1px solid #e2e8f0',borderRadius:5,fontSize:12,fontFamily:'inherit',outline:'none',color:'#64748b'}}/>
+                        </div>
                       </label>
                     </div>
                     {usedBy.length>0&&<div style={{marginTop:8,padding:'6px 8px',background:'#f0f9ff',borderRadius:5,fontSize:11,color:'#2563eb'}}>Bruges af: {usedBy.map(d=>d.desc+' ('+d.id+')').join(', ')}</div>}
@@ -2250,8 +2334,8 @@ function BudgetApp({session}){
           }
           const v=varer.find(x=>x.id===vid);
           if(!v)return;
-          const perUnit=calcVarePerUnit(v);
-          setData(prev=>prev.map(d=>d.id===vareFor?{...d,varRef:vid,pris:Math.round(perUnit*100)/100,enhed:v.enhed||d.enhed}:d));
+          // Just set varRef + enhed; pris is now live-linked via the sync effect.
+          setData(prev=>prev.map(d=>d.id===vareFor?{...d,varRef:vid,enhed:v.enhed||d.enhed}:d));
         };
         return(
           <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.3)',zIndex:500,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={()=>setVareFor(null)}>

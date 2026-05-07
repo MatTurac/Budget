@@ -149,6 +149,23 @@ function hasAnyActual(item,dataMap,receiptSums){
 }
 function calcSCT(sc){return sc.items.reduce((s,it)=>s+(it.antal||0)*(it.pris||0),0)}
 
+// "Rest" only counts not-done leaves — done items are settled (their over/under shows in
+// "afsluttet afvigelse" instead). Parents aggregate their children's rest.
+function calcRest(item,dataMap,receiptSums){
+  if(item.children&&item.children.length){
+    return item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+calcRest(c,dataMap,receiptSums):s;},0);
+  }
+  if(item.done)return 0;
+  return calcSum(item,dataMap)-calcActual(item,dataMap,receiptSums);
+}
+function calcDoneDeviation(item,dataMap,receiptSums){
+  if(item.children&&item.children.length){
+    return item.children.reduce((s,cid)=>{const c=dataMap.get(cid);return c?s+calcDoneDeviation(c,dataMap,receiptSums):s;},0);
+  }
+  if(!item.done)return 0;
+  return calcActual(item,dataMap,receiptSums)-calcSum(item,dataMap);
+}
+
 // Per-unit price for a vare. The "antal" on the budget row times this gives the total cost.
 //   forbrugPerEnhed × pris / enhederPerVare × faktor × (height if lbm and provided)
 function calcVarePerUnit(v){
@@ -769,8 +786,11 @@ function BudgetApp({session}){
       const actual=calcActual(d,dataMap,receiptSums);
       const sumTracked=calcSumTracked(d,dataMap,receiptSums);
       const has=hasAnyActual(d,dataMap,receiptSums);
-      // resterende = budget - faktisk (positive = budget left, negative = over)
-      m.set(d.id,{sum,actual,sumTracked,hasActual:has,diff:actual-sumTracked,rest:sum-actual});
+      // resterende = (budget - faktisk) for not-done items only.
+      // doneDev = sum of (actual - budget) over done items — the settled deviation.
+      const rest=calcRest(d,dataMap,receiptSums);
+      const doneDev=calcDoneDeviation(d,dataMap,receiptSums);
+      m.set(d.id,{sum,actual,sumTracked,hasActual:has,diff:actual-sumTracked,rest,doneDev});
     });
     return m;
   },[data,dataMap,receiptSums]);
@@ -905,7 +925,16 @@ function BudgetApp({session}){
   },[data,lvl2StickyMap,detailLevel,collapsed]);
 
   const updateItem=(id,field,value)=>setData(p=>p.map(d=>d.id===id?{...d,[field]:value}:d));
-  const toggleDone=(id)=>setData(p=>p.map(d=>d.id===id?{...d,done:!d.done}:d));
+  // Toggle "done" on an item and cascade to ALL descendants (so checking a parent ticks every child).
+  const toggleDone=(id)=>setData(prev=>{
+    const item=prev.find(d=>d.id===id);
+    if(!item)return prev;
+    const next=!item.done;
+    const cascadeIds=new Set([id]);
+    const collect=(i)=>{const it=prev.find(d=>d.id===i);if(it?.children)it.children.forEach(c=>{cascadeIds.add(c);collect(c);});};
+    collect(id);
+    return prev.map(d=>cascadeIds.has(d.id)?{...d,done:next}:d);
+  });
 
   const addChild=parentId=>{
     const parent=dataMap.get(parentId);if(!parent||parent.level>=MAX_LEVEL)return;
@@ -1401,7 +1430,7 @@ function BudgetApp({session}){
   // Settled deviation: actual − budget for items marked done
   const doneDiff=doneLeaves.reduce((s,d)=>{const m=metricsById.get(d.id);return s+(m?m.actual-m.sum:0);},0);
 
-  const gridCols=isMobile?'40px 1fr 80px 30px':'52px 1.3fr 60px 48px 82px 92px 92px 72px 100px 124px';
+  const gridCols=isMobile?'40px 1fr 80px 30px':'52px 1.3fr 60px 48px 82px 92px 92px 72px 100px 124px 32px';
   const selectedItem=selectedId?dataMap.get(selectedId):null;
 
   const LinkEditor=({item})=>{
@@ -1585,7 +1614,7 @@ function BudgetApp({session}){
               })()}
             </div>
             {!isMobile&&<div style={{display:'grid',gridTemplateColumns:gridCols,padding:'7px 10px',background:'#1e293b',color:'#cbd5e1',fontSize:10,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',gap:'0 12px'}}>
-              <span>Kode</span><span>Beskrivelse</span><span style={{textAlign:'right'}}>Antal</span><span>Enhed</span><span style={{textAlign:'right'}}>Enhedspris</span><span style={{textAlign:'right'}}>Budget</span><span style={{textAlign:'right'}}>Faktisk</span><span style={{textAlign:'right'}}>Rest</span><span>Kategori</span><span/>
+              <span>Kode</span><span>Beskrivelse</span><span style={{textAlign:'right'}}>Antal</span><span>Enhed</span><span style={{textAlign:'right'}}>Enhedspris</span><span style={{textAlign:'right'}}>Budget</span><span style={{textAlign:'right'}}>Faktisk</span><span style={{textAlign:'right'}}>Rest</span><span>Kategori</span><span/><span style={{textAlign:'center'}}>✓</span>
             </div>}
           </div>
         )}
@@ -1984,11 +2013,7 @@ function BudgetApp({session}){
                 <span style={{fontSize:10,color:'#94a3b8',fontFamily:'monospace'}}>{item.id}</span>
                 <div style={{display:'flex',alignItems:'center',paddingLeft:indent,gap:4,overflow:'hidden'}}>
                   {hasKids&&!hideChevron?<button onClick={e=>{e.stopPropagation();toggleCollapse(item.id)}} style={{width:16,height:16,borderRadius:3,border:'none',background:'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:item.level===1?'#94a3b8':'#64748b',fontSize:9,transition:'transform .15s',transform:isCol?'rotate(-90deg)':'rotate(0)'}}>▼</button>
-                    :!item.children?.length&&item.level>=2
-                      ?<button onClick={e=>{e.stopPropagation();toggleDone(item.id)}}
-                        title={item.done?'Markér som ikke afsluttet':'Markér som afsluttet'}
-                        style={{width:16,height:16,borderRadius:3,border:'1px solid '+(item.done?'#16a34a':'#cbd5e1'),background:item.done?'#16a34a':'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:'white',fontSize:10,padding:0,fontWeight:700,lineHeight:1}}>{item.done?'✓':''}</button>
-                      :<span style={{width:16,flexShrink:0}}/>}
+                    :<span style={{width:16,flexShrink:0}}/>}
                   <span style={{flex:1,minWidth:0,position:'relative',textDecoration:item.done?'line-through':'none',opacity:item.done?0.65:1}}><DescCell item={item}/></span>
                   {item.link?<a href={item.link} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()} style={{color:tweaks.accentColor,fontSize:9,flexShrink:0}}>↗</a>:null}
                   <button onClick={e=>{e.stopPropagation();setEditingLink(item.id)}} title="Tilføj/rediger link" style={{width:14,height:14,border:'none',background:'transparent',cursor:'pointer',fontSize:9,color:item.link?tweaks.accentColor:'#cbd5e1',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>🔗</button>
@@ -2035,6 +2060,11 @@ function BudgetApp({session}){
                   <button onClick={e=>{e.stopPropagation();moveItem(item.id,'down')}} disabled={!canMove(item.id,'down')} title="Flyt ned" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:canMove(item.id,'down')?'pointer':'default',fontSize:10,color:canMove(item.id,'down')?(item.level===1?'rgba(255,255,255,.65)':'#94a3b8'):'#e2e8f0',display:'flex',alignItems:'center',justifyContent:'center'}}>▼</button>
                   {canAddChild&&<button onClick={e=>{e.stopPropagation();addChild(item.id)}} title="Tilføj underpost" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:14,color:item.level===1?'rgba(255,255,255,.65)':'#94a3b8',display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>}
                   <button onClick={e=>{e.stopPropagation();if(item.level===1){if(!confirm('Slet hele projektet "'+item.desc+'" inkl. alle underposter? Dette kan ikke fortrydes.'))return;}deleteItem(item.id)}} title="Slet" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:item.level===1?'rgba(255,255,255,.55)':'#cbd5e1',display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+                </div>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  <button onClick={e=>{e.stopPropagation();toggleDone(item.id)}}
+                    title={item.done?'Markér som ikke afsluttet (fjerner også på alle børn)':'Markér som afsluttet (sætter også alle børn)'}
+                    style={{width:18,height:18,borderRadius:4,border:'1px solid '+(item.done?'#16a34a':(item.level===1?'rgba(255,255,255,.4)':'#cbd5e1')),background:item.done?'#16a34a':'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontSize:11,padding:0,fontWeight:700,lineHeight:1}}>{item.done?'✓':''}</button>
                 </div>
               </div>
             );

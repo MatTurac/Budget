@@ -287,9 +287,11 @@ function SearchableLeafSelect({value,onChange,options,accent,placeholder='Søg e
           <input ref={inputRef} autoFocus value={query} onChange={e=>{setQuery(e.target.value);setHover(0);}} onKeyDown={onKey} onClick={e=>e.stopPropagation()} placeholder={placeholder}
             style={{border:'none',outline:'none',fontSize:11,fontFamily:'inherit',background:'transparent',flex:1,color:'#0f172a',minWidth:0}}/>
           :(current?.value
-            ?<span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1,minWidth:0,color:accent,fontWeight:600}}>
+            ?(current.value.startsWith('__')
+              ?<span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1,minWidth:0,color:'#0369a1',fontWeight:600}}>{current.label}</span>
+              :<span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1,minWidth:0,color:accent,fontWeight:600}}>
                 <span style={{fontFamily:'monospace',fontSize:10,color:'#94a3b8',marginRight:6,fontWeight:400}}>{current.value}</span>{current.label}
-              </span>
+              </span>)
             :<span style={{flex:1,color:'#94a3b8'}}>— Ingen kobling —</span>)
         }
         <span style={{fontSize:9,color:'#94a3b8',flexShrink:0}}>{open?'▲':'▼'}</span>
@@ -307,6 +309,17 @@ function SearchableLeafSelect({value,onChange,options,accent,placeholder='Søg e
           ):filtered.map((o,i)=>{
             const isSel=o.value===value;
             const isHov=hover===i+1;
+            const isPseudo=o.value.startsWith('__');
+            if(isPseudo){
+              return(
+                <div key={o.value} data-hover={isHov} onClick={()=>pick(o.value)}
+                  style={{padding:'8px 10px',cursor:'pointer',background:isSel?'#dbeafe':isHov?'#eff6ff':'#f0f9ff',borderBottom:'1px solid #f1f5f9',color:'#0369a1',fontWeight:600,fontSize:12}}
+                  onMouseEnter={()=>setHover(i+1)}>
+                  {o.label}
+                  {o.path&&<div style={{fontSize:10,color:'#0369a1',marginTop:1,fontWeight:400,fontStyle:'italic',opacity:.75}}>{o.path}</div>}
+                </div>
+              );
+            }
             const lvlStyle={
               1:{fw:700,fs:14,color:'#0f172a',bg:'#f1f5f9'},
               2:{fw:700,fs:13,color:'#1e293b',bg:'#f8fafc'},
@@ -744,7 +757,7 @@ function BudgetApp({session}){
   const signOut=async()=>{await supabase.auth.signOut();};
 
   const dataMap=useMemo(()=>{const m=new Map();data.forEach(d=>m.set(d.id,d));return m},[data]);
-  const receiptSums=useMemo(()=>{const m=new Map();receipts.forEach(r=>(r.lines||[]).forEach(l=>{if(l.linkedId&&l.amount){m.set(l.linkedId,(m.get(l.linkedId)||0)+(Number(l.amount)||0));}}));return m;},[receipts]);
+  const receiptSums=useMemo(()=>{const m=new Map();receipts.forEach(r=>(r.lines||[]).forEach(l=>{if(l.linkedId&&l.linkedId!=='__noproject__'&&l.amount){m.set(l.linkedId,(m.get(l.linkedId)||0)+(Number(l.amount)||0));}}));return m;},[receipts]);
   const subCalcMap=useMemo(()=>{const m=new Map();subCalcs.forEach(s=>m.set(s.id,s));return m},[subCalcs]);
 
   // Precompute per-row metrics once per data/receipt change. Reading from this map in the
@@ -1805,7 +1818,9 @@ function BudgetApp({session}){
                                   onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                                   <span style={{color:'#475569',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.desc||<span style={{color:'#cbd5e1',fontStyle:'italic'}}>Ingen beskrivelse</span>}</span>
                                   {!isMobile&&<span style={{textAlign:'right',fontWeight:600,color:'#334155'}}>{fmt(l.amount)} kr</span>}
-                                  {l.linkedId?(
+                                  {l.linkedId==='__noproject__'?(
+                                    <span style={{color:'#0369a1',fontWeight:600,background:'#e0f2fe',padding:'2px 8px',borderRadius:4,border:'1px solid #bae6fd',fontSize:11,justifySelf:'start'}}>📋 Afstemt (ikke projekt)</span>
+                                  ):l.linkedId?(
                                     <span style={{color:tweaks.accentColor,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={l.linkedId+' '+l.linkedDesc}>
                                       <span style={{fontFamily:'monospace',fontSize:10,color:'#94a3b8',marginRight:4}}>{l.linkedId}</span>{l.linkedDesc}
                                     </span>
@@ -2135,6 +2150,8 @@ function BudgetApp({session}){
                         {UNITS.map(u=><option key={u} value={u}>{u||'(enhed)'}</option>)}
                       </select>
                       <span style={{fontSize:12,fontWeight:700,color:tweaks.accentColor,whiteSpace:'nowrap'}}>{fmt2(perUnit)} kr/{v.enhed||'enhed'}</span>
+                      {usedBy.length>0&&<span title={usedBy.map(d=>d.id+' '+d.desc).join('\n')}
+                        style={{padding:'2px 6px',background:'#dbeafe',borderRadius:4,fontSize:10,color:'#1d4ed8',fontWeight:600,whiteSpace:'nowrap',cursor:'help'}}>↑ {usedBy.length}×</span>}
                       <button onClick={()=>{if(confirm('Slet "'+v.name+'"?'))setVarer(p=>p.filter((_,i)=>i!==vIdx))}}
                         title="Slet"
                         style={{width:22,height:22,border:'none',background:'transparent',color:'#cbd5e1',cursor:'pointer',fontSize:13,padding:0,borderRadius:4}}>✕</button>
@@ -2171,7 +2188,6 @@ function BudgetApp({session}){
                       <input type="text" value={v.faktorLabel||''} onChange={e=>update('faktorLabel',e.target.value)} placeholder="fx mm tykkelse"
                         style={{padding:'3px 6px',border:'1px solid #e2e8f0',borderRadius:4,fontSize:11,fontFamily:'inherit',outline:'none',color:'#0f172a'}}/>
                     </div>
-                    {usedBy.length>0&&<div style={{marginTop:6,padding:'4px 8px',background:'#f0f9ff',borderRadius:4,fontSize:10,color:'#2563eb'}}>Bruges af: {usedBy.map(d=>d.desc+' ('+d.id+')').join(', ')}</div>}
                   </div>
                 );
               })}
@@ -2279,7 +2295,11 @@ function BudgetApp({session}){
         const r=receipts.find(x=>x.id===viewReceipt);
         if(!r)return null;
         const buildPath=(d)=>{const p=[];let cur=d;while(cur.parent){cur=dataMap.get(cur.parent);if(!cur)break;p.unshift(cur.desc);}return p.join(' › ');};
-        const leafOptions=[{value:'',label:'Ingen kobling',path:''},...data.filter(d=>d.level>=1).map(d=>({value:d.id,label:d.desc,path:buildPath(d),level:d.level}))];
+        const leafOptions=[
+          {value:'',label:'Ingen kobling',path:''},
+          {value:'__noproject__',label:'📋 Ikke projektrelateret',path:'(udenfor projekt — markeres som afstemt)'},
+          ...data.filter(d=>d.level>=1).map(d=>({value:d.id,label:d.desc,path:buildPath(d),level:d.level}))
+        ];
         const updateR=(field,val)=>{setReceipts(p=>p.map(x=>x.id===r.id?{...x,[field]:val}:x));saveReceiptDebounced(r.id);};
         const updateLine=(lineId,field,val)=>{setReceipts(p=>p.map(x=>x.id!==r.id?x:{...x,lines:x.lines.map(l=>l.id===lineId?{...l,[field]:val}:l)}));saveReceiptDebounced(r.id);};
         const addLine=()=>{setReceipts(p=>p.map(x=>x.id!==r.id?x:{...x,lines:[...(x.lines||[]),{id:'l'+Date.now(),desc:'',amount:'',linkedId:''}]}));saveReceiptDebounced(r.id);};

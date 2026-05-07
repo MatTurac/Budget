@@ -1280,7 +1280,14 @@ function BudgetApp({session}){
   const SelectCell=({id,field,value,options})=>{
     const ref=useRef(null);
     const isEd=editingCell?.id===id&&editingCell?.field===field;
-    useEffect(()=>{if(isEd&&ref.current)ref.current.focus();},[isEd]);
+    useEffect(()=>{
+      if(!isEd||!ref.current)return;
+      ref.current.focus();
+      // showPicker() opens the native dropdown (supported in modern browsers).
+      if(typeof ref.current.showPicker==='function'){
+        try{ref.current.showPicker();}catch(_){}
+      }
+    },[isEd]);
     return(
       <select ref={ref} value={value||''} onChange={e=>updateItem(id,field,e.target.value)} onClick={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()}
         onKeyDown={e=>{

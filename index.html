@@ -1283,10 +1283,9 @@ function BudgetApp({session}){
     useEffect(()=>{
       if(!isEd||!ref.current)return;
       ref.current.focus();
-      // showPicker() opens the native dropdown (supported in modern browsers).
-      if(typeof ref.current.showPicker==='function'){
-        try{ref.current.showPicker();}catch(_){}
-      }
+      // Note: auto-opening via showPicker() interferes with Tab navigation (the browser
+      // consumes the next Tab press to close the picker, blocking our handler).
+      // The visual focus border + arrow keys / first-letter jump are enough.
     },[isEd]);
     return(
       <select ref={ref} value={value||''} onChange={e=>updateItem(id,field,e.target.value)} onClick={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()}

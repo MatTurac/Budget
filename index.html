@@ -619,12 +619,15 @@ function BudgetApp({session}){
             norm.receipts.forEach((r,i)=>{if(r!==withUrls[i])saveReceiptDebounced(r.id);});
           },0);
         }
+        // Only mark hydration done AFTER all state has been populated successfully.
+        // Otherwise a partial hydration failure would let the debounced save effect
+        // overwrite the DB with empty initial state, destroying real data.
+        hydratedRef.current=true;
       }catch(e){
         console.error('Load failed:',e);
         setLoadError(e.message||'Kunne ikke hente data');
       }finally{
         setLoading(false);
-        hydratedRef.current=true;
       }
     })();
   },[userId]);

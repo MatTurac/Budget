@@ -964,12 +964,21 @@ function BudgetApp({session}){
     setData(prev=>renumberApplied([...prev,newItem]));
   };
 
-  const deleteItem=id=>{
-    const item=dataMap.get(id);if(!item)return;
-    const rem=new Set();const collect=i=>{rem.add(i);const it=dataMap.get(i);if(it?.children)it.children.forEach(collect);};collect(id);
+  const deleteItem=target=>{
+    // Accept the row object (preferred) or a bare id. Deleting by object reference means an
+    // identical duplicate sharing the same id is left untouched — only the clicked row goes.
+    const item=(target&&typeof target==='object')?target:dataMap.get(target);if(!item)return;
+    const id=item.id;
+    const rem=new Set();const collect=i=>{rem.add(i);const it=dataMap.get(i);if(it?.children)it.children.forEach(collect);};
+    (item.children||[]).forEach(collect);
     setData(prev=>{
-      let u=prev.filter(d=>!rem.has(d.id));
-      if(item.parent)u=u.map(d=>d.id===item.parent?{...d,children:(d.children||[]).filter(c=>c!==id)}:d);
+      let u=prev.filter(d=>d!==item&&!rem.has(d.id));
+      // Remove only ONE reference to this row from its parent (a shared id could appear twice).
+      if(item.parent)u=u.map(d=>{
+        if(d.id!==item.parent||!d.children)return d;
+        const i=d.children.indexOf(id);if(i<0)return d;
+        const ch=d.children.slice();ch.splice(i,1);return{...d,children:ch};
+      });
       return renumberApplied(u);
     });
     if(selectedId===id)setSelectedId(null);
@@ -1540,7 +1549,7 @@ function BudgetApp({session}){
               {canAddChild&&<button onClick={()=>addChild(item.id)} style={{padding:'6px 10px',borderRadius:5,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:11,fontWeight:600,color:'#475569',fontFamily:'DM Sans'}}>+ Underpost</button>}
               <button onClick={()=>setEditingLink(item.id)} style={{padding:'6px 10px',borderRadius:5,border:'1px solid #e2e8f0',background:'white',cursor:'pointer',fontSize:11,color:'#475569',fontFamily:'DM Sans'}}>{item.link?'✎ Link':'+ Link'}</button>
               {item.link&&<a href={item.link} target="_blank" rel="noopener" style={{padding:'6px 10px',borderRadius:5,border:'1px solid #e2e8f0',background:'white',fontSize:11,color:tweaks.accentColor,textDecoration:'none',fontFamily:'DM Sans'}}>↗ Åbn</a>}
-              <button onClick={()=>{const msg=item.level===1?'Slet hele projektet "'+item.desc+'" inkl. alle underposter? Dette kan ikke fortrydes.':'Slet "'+item.desc+'"?';if(confirm(msg))deleteItem(item.id)}} style={{padding:'6px 10px',borderRadius:5,border:'1px solid #fecaca',background:'white',cursor:'pointer',fontSize:11,color:'#dc2626',fontFamily:'DM Sans'}}>✕ Slet</button>
+              <button onClick={()=>{const msg=item.level===1?'Slet hele projektet "'+item.desc+'" inkl. alle underposter? Dette kan ikke fortrydes.':'Slet "'+item.desc+'"?';if(confirm(msg))deleteItem(item)}} style={{padding:'6px 10px',borderRadius:5,border:'1px solid #fecaca',background:'white',cursor:'pointer',fontSize:11,color:'#dc2626',fontFamily:'DM Sans'}}>✕ Slet</button>
               <button onClick={()=>{setEditingCell(null);setSelectedId(null);if(document.activeElement&&document.activeElement.blur)document.activeElement.blur()}} style={{padding:'6px 14px',borderRadius:5,border:'none',background:tweaks.accentColor,color:'white',cursor:'pointer',fontSize:11,fontWeight:600,fontFamily:'DM Sans',marginLeft:'auto'}}>Færdig</button>
             </div>
           </div>
@@ -2047,7 +2056,7 @@ function BudgetApp({session}){
                   <button onClick={e=>{e.stopPropagation();moveItem(item.id,'up')}} disabled={!canMove(item.id,'up')} title="Flyt op" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:canMove(item.id,'up')?'pointer':'default',fontSize:10,color:canMove(item.id,'up')?(item.level===1?'rgba(255,255,255,.65)':'#94a3b8'):'#e2e8f0',display:'flex',alignItems:'center',justifyContent:'center'}}>▲</button>
                   <button onClick={e=>{e.stopPropagation();moveItem(item.id,'down')}} disabled={!canMove(item.id,'down')} title="Flyt ned" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:canMove(item.id,'down')?'pointer':'default',fontSize:10,color:canMove(item.id,'down')?(item.level===1?'rgba(255,255,255,.65)':'#94a3b8'):'#e2e8f0',display:'flex',alignItems:'center',justifyContent:'center'}}>▼</button>
                   {canAddChild&&<button onClick={e=>{e.stopPropagation();addChild(item.id)}} title="Tilføj underpost" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:14,color:item.level===1?'rgba(255,255,255,.65)':'#94a3b8',display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>}
-                  <button onClick={e=>{e.stopPropagation();if(item.level===1){if(!confirm('Slet hele projektet "'+item.desc+'" inkl. alle underposter? Dette kan ikke fortrydes.'))return;}deleteItem(item.id)}} title="Slet" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:item.level===1?'rgba(255,255,255,.55)':'#cbd5e1',display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+                  <button onClick={e=>{e.stopPropagation();if(item.level===1){if(!confirm('Slet hele projektet "'+item.desc+'" inkl. alle underposter? Dette kan ikke fortrydes.'))return;}deleteItem(item)}} title="Slet" style={{width:20,height:20,borderRadius:4,border:'none',background:'transparent',cursor:'pointer',fontSize:11,color:item.level===1?'rgba(255,255,255,.55)':'#cbd5e1',display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
                 </div>
                 <div style={{display:'flex',alignItems:'center',justifyContent:'center'}}>
                   <button onClick={e=>{e.stopPropagation();toggleDone(item.id)}}
